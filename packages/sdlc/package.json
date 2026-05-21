@@ -1,0 +1,22 @@
+{
+  "name": "@nexus/sdlc",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nexus/context": "workspace:*",
+    "@nexus/events": "workspace:*",
+    "@nexus/shared": "workspace:*"
+  }
+}

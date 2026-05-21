@@ -1,0 +1,31 @@
+{
+  "name": "@nexus/tui",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nexus/config": "workspace:*",
+    "@nexus/events": "workspace:*",
+    "@nexus/shared": "workspace:*",
+    "ink": "^7.0.3",
+    "react": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "ink-testing-library": "^4.0.0"
+  }
+}

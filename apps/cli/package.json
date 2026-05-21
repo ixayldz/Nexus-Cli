@@ -1,0 +1,39 @@
+{
+  "name": "@nexus/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "nexus": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node dist/main.js"
+  },
+  "dependencies": {
+    "@nexus/agent": "workspace:*",
+    "@nexus/config": "workspace:*",
+    "@nexus/context": "workspace:*",
+    "@nexus/events": "workspace:*",
+    "@nexus/learning": "workspace:*",
+    "@nexus/mcp": "workspace:*",
+    "@nexus/model-router": "workspace:*",
+    "@nexus/provider-deepseek": "workspace:*",
+    "@nexus/provider-openai": "workspace:*",
+    "@nexus/runtime": "workspace:*",
+    "@nexus/sandbox": "workspace:*",
+    "@nexus/sdlc": "workspace:*",
+    "@nexus/security": "workspace:*",
+    "@nexus/shared": "workspace:*",
+    "@nexus/skills": "workspace:*",
+    "@nexus/hooks": "workspace:*",
+    "@nexus/test-utils": "workspace:*",
+    "@nexus/tool-bus": "workspace:*",
+    "@nexus/tui": "workspace:*"
+  }
+}

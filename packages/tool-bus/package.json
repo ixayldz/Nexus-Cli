@@ -1,0 +1,25 @@
+{
+  "name": "@nexus/tool-bus",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nexus/config": "workspace:*",
+    "@nexus/events": "workspace:*",
+    "@nexus/sandbox": "workspace:*",
+    "@nexus/security": "workspace:*",
+    "@nexus/shared": "workspace:*",
+    "zod": "^4.1.12"
+  }
+}

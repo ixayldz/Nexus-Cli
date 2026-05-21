@@ -1,0 +1,32 @@
+{
+  "name": "@nexus/runtime",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nexus/config": "workspace:*",
+    "@nexus/context": "workspace:*",
+    "@nexus/events": "workspace:*",
+    "@nexus/hooks": "workspace:*",
+    "@nexus/mcp": "workspace:*",
+    "@nexus/model-router": "workspace:*",
+    "@nexus/sandbox": "workspace:*",
+    "@nexus/security": "workspace:*",
+    "@nexus/sdlc": "workspace:*",
+    "@nexus/skills": "workspace:*",
+    "@nexus/shared": "workspace:*",
+    "@nexus/storage": "workspace:*",
+    "@nexus/tool-bus": "workspace:*"
+  }
+}
