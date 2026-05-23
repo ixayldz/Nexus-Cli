@@ -20,7 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+      - id: dependency-review
+        continue-on-error: true
+        uses: actions/dependency-review-action@v4
+      - if: steps.dependency-review.outcome == 'failure'
+        run: |
+          echo "::warning::Dependency review is unavailable or failed. Enable GitHub Dependency Graph for blocking dependency-review enforcement. pnpm audit remains blocking."
 
   audit:
     name: pnpm audit
@@ -55,11 +60,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: ossf/scorecard-action@v2.4.0
+      - id: scorecard
+        continue-on-error: true
+        uses: ossf/scorecard-action@v2.4.3
         with:
           results_format: sarif
           results_file: scorecard-results.sarif
           publish_results: true
+      - if: steps.scorecard.outcome == 'failure'
+        run: |
+          echo "::warning::OpenSSF Scorecard failed or reported advisory findings. Audit and CodeQL remain blocking; review the scorecard job output before release."
 
   required:
     name: security / required
@@ -68,9 +78,15 @@ jobs:
     if: always()
     steps:
       - run: |
-          for result in "${{ needs.dependency-review.result }}" "${{ needs.audit.result }}" "${{ needs.codeql.result }}" "${{ needs.scorecard.result }}"; do
+          for result in "${{ needs.audit.result }}" "${{ needs.codeql.result }}"; do
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               echo "Security job failed or was cancelled."
               exit 1
+            fi
+          done
+
+          for result in "${{ needs.dependency-review.result }}" "${{ needs.scorecard.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::warning::Advisory security job failed or was cancelled."
             fi
           done

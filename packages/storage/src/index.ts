@@ -114,8 +114,8 @@ export async function safeAtomicWriteText(input: SafeAtomicWriteTextInput): Prom
   await mkdir(parent, { recursive: true });
   await assertDirectoryInsideWorkspace(workspaceRoot, parent, "write target parent");
 
-  const realAllowedRoot = await realpath(allowedRoot).catch(() => allowedRoot);
-  const realParent = await realpath(parent).catch(() => parent);
+  const realAllowedRoot = await realpathForExistingOrNearest(allowedRoot);
+  const realParent = await realpathForExistingOrNearest(parent);
   if (!isInside(realParent, realAllowedRoot)) {
     throw new Error("Write target parent resolves outside the allowed storage root.");
   }
@@ -155,8 +155,8 @@ export async function safeReadTextFile(input: SafeReadTextFileInput): Promise<st
     "read target parent"
   );
 
-  const realAllowedRoot = await realpath(allowedRoot).catch(() => allowedRoot);
-  const realParent = await realpath(dirname(targetPath)).catch(() => dirname(targetPath));
+  const realAllowedRoot = await realpathForExistingOrNearest(allowedRoot);
+  const realParent = await realpathForExistingOrNearest(dirname(targetPath));
   if (!isInside(realParent, realAllowedRoot)) {
     throw new Error("Read target parent resolves outside the allowed storage root.");
   }
@@ -327,6 +327,21 @@ async function assertOptionalDirectoryInsideWorkspace(
     return;
   }
   await assertDirectoryInsideWorkspace(workspaceRoot, directory, description);
+}
+
+async function realpathForExistingOrNearest(path: string): Promise<string> {
+  const resolvedPath = resolve(path);
+  const direct = await realpath(resolvedPath).catch(() => undefined);
+  if (direct) {
+    return direct;
+  }
+
+  const parent = dirname(resolvedPath);
+  if (parent === resolvedPath) {
+    return resolvedPath;
+  }
+
+  return join(await realpathForExistingOrNearest(parent), basename(resolvedPath));
 }
 
 function isInside(target: string, root: string): boolean {

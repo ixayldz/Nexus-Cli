@@ -158,6 +158,27 @@ describe("session storage", () => {
     ).rejects.toThrow("Read target must not be a symlink");
   });
 
+  it("canonicalizes missing read parents under a symlinked workspace path", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-storage-"));
+    externalDir = await mkdtemp(join(tmpdir(), "nexus-storage-link-"));
+    const workspaceAlias = join(externalDir, "workspace");
+    try {
+      await symlink(tempDir, workspaceAlias, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+
+    await mkdir(join(tempDir, ".nexus"), { recursive: true });
+
+    await expect(
+      safeReadTextFile({
+        path: join(workspaceAlias, ".nexus", "learning", "project-memory.md"),
+        allowedRoot: join(workspaceAlias, ".nexus"),
+        workspaceRoot: workspaceAlias
+      })
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects invalid session ids before creating run directories", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-storage-"));
 
