@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   type EventId,
   type SessionId,
@@ -99,6 +99,13 @@ export interface EventBus {
   subscribe(handler: EventHandler): Unsubscribe;
 }
 
+export interface JsonlEventWriterOptions {
+  allowedRoot?: string;
+  workspaceRoot?: string;
+  lockTimeoutMs?: number;
+  fsync?: boolean;
+}
+
 export interface CreateEventInput {
   sessionId: SessionId;
   type: NexusEventType;
@@ -140,16 +147,69 @@ export class InMemoryEventBus implements EventBus {
 }
 
 export class JsonlEventWriter {
-  public constructor(private readonly filePath: string) {}
+  private queue: Promise<void> = Promise.resolve();
+
+  public constructor(
+    private readonly filePath: string,
+    private readonly options: JsonlEventWriterOptions = {}
+  ) {}
 
   public async write(event: NexusEvent): Promise<void> {
-    validateNexusEvent(event);
+    const line = `${safeJsonStringify(validateNexusEvent(event))}\n`;
+    const task = this.queue.then(() => this.writeLine(line));
+    this.queue = task.catch(() => undefined);
+    return task;
+  }
+
+  private async writeLine(line: string): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
+    await this.assertSafeEventPath();
+    const lockPath = join(dirname(this.filePath), `.${basename(this.filePath)}.lock`);
+    const lock = await acquireLock(lockPath, this.options.lockTimeoutMs ?? 5000);
+    try {
+      const handle = await open(this.filePath, "a");
+      try {
+        await handle.appendFile(line, "utf8");
+        if (this.options.fsync !== false) {
+          await handle.sync();
+        }
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await lock.close().catch(() => undefined);
+      await rm(lockPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  private async assertSafeEventPath(): Promise<void> {
+    const parent = dirname(this.filePath);
+    const parentMetadata = await lstat(parent).catch(() => undefined);
+    if (parentMetadata?.isSymbolicLink()) {
+      throw new Error("Event log parent must not be a symlink.");
+    }
     const metadata = await lstat(this.filePath).catch(() => undefined);
     if (metadata?.isSymbolicLink()) {
       throw new Error("Event log path must not be a symlink.");
     }
-    await writeFile(this.filePath, `${safeJsonStringify(event)}\n`, { flag: "a" });
+
+    if (!this.options.allowedRoot || !this.options.workspaceRoot) {
+      return;
+    }
+    const workspaceRoot = resolve(this.options.workspaceRoot);
+    const allowedRoot = resolve(this.options.allowedRoot);
+    const targetPath = resolve(this.filePath);
+    if (!isInside(allowedRoot, workspaceRoot)) {
+      throw new Error("Event log allowed root must be inside the workspace.");
+    }
+    if (!isInside(targetPath, allowedRoot)) {
+      throw new Error("Event log path escapes the allowed root.");
+    }
+    const realAllowedRoot = await realpath(allowedRoot).catch(() => allowedRoot);
+    const realParent = await realpath(parent).catch(() => parent);
+    if (!isInside(realParent, realAllowedRoot)) {
+      throw new Error("Event log parent resolves outside the allowed root.");
+    }
   }
 }
 
@@ -158,7 +218,47 @@ export async function readJsonlEvents(filePath: string): Promise<NexusEvent[]> {
   return content
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
-    .map((line) => validateNexusEvent(JSON.parse(line) as unknown));
+    .map((line, index) => {
+      try {
+        return validateNexusEvent(JSON.parse(line) as unknown);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid JSONL event at ${filePath}:${index + 1}: ${message}`);
+      }
+    });
+}
+
+async function acquireLock(
+  lockPath: string,
+  timeoutMs: number
+): Promise<Awaited<ReturnType<typeof open>>> {
+  const started = Date.now();
+  while (true) {
+    const lockMetadata = await lstat(lockPath).catch(() => undefined);
+    if (lockMetadata?.isSymbolicLink()) {
+      throw new Error("Event log lock path must not be a symlink.");
+    }
+    try {
+      return await open(lockPath, "wx");
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+      if (Date.now() - started > timeoutMs) {
+        throw new Error(`Timed out waiting for event log lock: ${lockPath}`);
+      }
+      await delay(10);
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+function isInside(target: string, root: string): boolean {
+  return target === root || target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
 export function validateNexusEvent(value: unknown): NexusEvent {

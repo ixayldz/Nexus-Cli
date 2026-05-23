@@ -141,7 +141,6 @@ export class NexusRuntime {
     const sessionId = createId("nx") as unknown as SessionId;
     const threadId = createId("thread") as unknown as ThreadId;
     const storage = await createSessionStorage({ cwd: input.cwd, sessionId });
-    this.attachEventWriter(storage.eventLogPath);
 
     const session: NexusSession = {
       id: sessionId,
@@ -156,6 +155,7 @@ export class NexusRuntime {
 
     this.session = session;
     this.storage = storage;
+    this.attachEventWriter(storage.eventLogPath);
 
     await storage.writeManifest(createManifest(session, storage));
     await this.eventBus.publish(
@@ -194,7 +194,6 @@ export class NexusRuntime {
     const replay = buildSessionReplaySummary(manifest, replayEvents);
     this.services.context = new ContextCompiler({ sessionReplay: replay });
     this.services.sdlc = await restoreSdlcManagerFromReplay(manifest, storage, replayEvents);
-    this.attachEventWriter(storage.eventLogPath);
     const session: NexusSession = {
       id: manifest.sessionId,
       createdAt: manifest.startedAt,
@@ -208,6 +207,7 @@ export class NexusRuntime {
 
     this.session = session;
     this.storage = storage;
+    this.attachEventWriter(storage.eventLogPath);
     await storage.writeManifest(
       mergeManifest(
         manifest,
@@ -343,7 +343,13 @@ export class NexusRuntime {
 
   private attachEventWriter(eventLogPath: string): void {
     this.eventWriterUnsubscribe?.();
-    const eventWriter = new JsonlEventWriter(eventLogPath);
+    if (!this.session || !this.storage) {
+      return;
+    }
+    const eventWriter = new JsonlEventWriter(eventLogPath, {
+      allowedRoot: this.storage.runDirectory,
+      workspaceRoot: this.session.cwd
+    });
     this.eventWriterUnsubscribe = this.eventBus.subscribe((event) => eventWriter.write(event));
   }
 }

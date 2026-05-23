@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, type ResolvedConfig } from "@nexus/config";
 import { InMemoryEventBus } from "@nexus/events";
@@ -94,8 +94,10 @@ describe("MinimalAgentOrchestrator", () => {
       const provider = new LongWorkflowProvider();
       const eventBus = new InMemoryEventBus();
       const seenEvents: string[] = [];
+      const parentEvents: Array<Record<string, unknown>> = [];
       eventBus.subscribe((event) => {
         seenEvents.push(event.type);
+        parentEvents.push(event);
       });
       const { runtime } = createRuntimeFixture({ cwd, provider, eventBus });
 
@@ -239,8 +241,10 @@ describe("MinimalAgentOrchestrator", () => {
       const provider = new MutatingSubagentProvider();
       const eventBus = new InMemoryEventBus();
       const seenEvents: string[] = [];
+      const parentEvents: Array<Record<string, unknown>> = [];
       eventBus.subscribe((event) => {
         seenEvents.push(event.type);
+        parentEvents.push(event);
       });
       const { runtime, config, services } = createRuntimeFixture({ cwd, provider, eventBus });
       const session = await runtime.startSession({ cwd, mode: "non-interactive" });
@@ -263,9 +267,44 @@ describe("MinimalAgentOrchestrator", () => {
 
       expect(result.status).toBe("completed");
       expect(result.summary).toContain("Denied mutation as expected");
+      expect(result.childSessionId).not.toBe(session.id);
+      expect(result.childThreadId).not.toBe(session.activeThreadId);
       await expect(readFile(join(cwd, "src", "subagent.ts"), "utf8")).rejects.toThrow();
       expect(seenEvents).toContain("subagent.started");
       expect(seenEvents).toContain("subagent.completed");
+      expect(parentEvents.find((event) => event.type === "subagent.started")).toMatchObject({
+        sessionId: session.id,
+        threadId: session.activeThreadId,
+        childSessionId: result.childSessionId,
+        childThreadId: result.childThreadId
+      });
+
+      const childManifest = JSON.parse(
+        await readFile(join(dirname(result.eventLogPath), "manifest.json"), "utf8")
+      ) as Record<string, unknown>;
+      expect(childManifest).toMatchObject({
+        sessionId: result.childSessionId,
+        parentSessionId: session.id,
+        parentThreadId: session.activeThreadId,
+        subagent: {
+          id: result.id,
+          name: "Read Only Review",
+          role: "reviewer",
+          permissionProfile: "read-only",
+          status: "completed"
+        }
+      });
+      const childEvents = (await readFile(result.eventLogPath, "utf8"))
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(childEvents.some((event) => event.type === "model.call.started")).toBe(true);
+      expect(childEvents.every((event) => event.sessionId === result.childSessionId)).toBe(true);
+      expect(childEvents.every((event) => event.threadId === result.childThreadId)).toBe(true);
+      const parentManifest = JSON.parse(
+        await readFile(runtime.getStorage().manifestPath, "utf8")
+      ) as { childSessionIds?: string[] };
+      expect(parentManifest.childSessionIds).toContain(result.childSessionId);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

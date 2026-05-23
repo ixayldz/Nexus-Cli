@@ -603,13 +603,6 @@ export function parseSlashCommand(input: string): RuntimeIntent {
     case "/exit":
       return { type: "session.quit" };
     default:
-      if (slashCommands.includes(command as (typeof slashCommands)[number])) {
-        return {
-          type: "unsupported",
-          command,
-          message: `${command} is recognized; use /help for supported behavior in this build.`
-        };
-      }
       return {
         type: "unsupported",
         command,

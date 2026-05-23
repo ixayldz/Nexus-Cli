@@ -1,4 +1,10 @@
-import { createEvent } from "@nexus/events";
+import {
+  InMemoryEventBus,
+  JsonlEventWriter,
+  type EventBus,
+  type NexusEvent,
+  createEvent
+} from "@nexus/events";
 import {
   type ModelCallResult,
   type ModelMessage,
@@ -20,9 +26,11 @@ import {
   type ThreadId,
   type ToolCallId,
   createId,
+  nowIso,
   redactString,
   safeJsonStringify
 } from "@nexus/shared";
+import { createSessionStorage, type SessionStorage } from "@nexus/storage";
 import { createToolRequest } from "@nexus/tool-bus";
 
 export type AgentPhase = "discover" | "plan" | "execute" | "critic" | "finalize" | "blocked";
@@ -358,6 +366,9 @@ export interface SubagentResult {
   role: SubagentRole;
   status: "completed" | "failed";
   summary: string;
+  childSessionId: SessionId;
+  childThreadId: ThreadId;
+  eventLogPath: string;
 }
 
 export class SubagentManager {
@@ -371,6 +382,42 @@ export class SubagentManager {
       });
     }
     const { session, runtimeContext } = input;
+    const childSessionId = createId("nx") as unknown as SessionId;
+    const childThreadId = createId("thread") as unknown as ThreadId;
+    const childStorage = await createSessionStorage({
+      cwd: session.cwd,
+      sessionId: childSessionId
+    });
+    const childEventBus = new InMemoryEventBus();
+    const scopedChildEventBus = new ThreadScopedEventBus(childEventBus, childThreadId);
+    const childWriter = new JsonlEventWriter(childStorage.eventLogPath, {
+      allowedRoot: childStorage.runDirectory,
+      workspaceRoot: session.cwd
+    });
+    const unsubscribeChildWriter = childEventBus.subscribe((event) => childWriter.write(event));
+    const childSession: NexusSession = {
+      id: childSessionId,
+      createdAt: nowIso(),
+      cwd: session.cwd,
+      mode: session.mode,
+      config: runtimeContext.config,
+      activeThreadId: childThreadId,
+      eventLogPath: childStorage.eventLogPath,
+      parentSessionId: session.id
+    };
+
+    await childStorage.writeManifest(
+      createSubagentManifest({
+        childSession,
+        childStorage,
+        subagentId: id,
+        input,
+        status: "running",
+        filesChanged: [],
+        commandsRun: []
+      })
+    );
+    await recordParentChildSession(runtimeContext.storage, childSessionId);
     await runtimeContext.eventBus.publish(
       createEvent({
         sessionId: session.id,
@@ -378,6 +425,25 @@ export class SubagentManager {
         type: "subagent.started",
         data: {
           subagentId: id,
+          childSessionId,
+          childThreadId,
+          eventLogPath: childStorage.eventLogPath,
+          name: input.name,
+          role: input.role,
+          permissionProfile: input.permissionProfile,
+          prompt: input.prompt
+        }
+      })
+    );
+    await scopedChildEventBus.publish(
+      createEvent({
+        sessionId: childSession.id,
+        threadId: childSession.activeThreadId,
+        type: "subagent.started",
+        data: {
+          subagentId: id,
+          parentSessionId: session.id,
+          parentThreadId: session.activeThreadId,
           name: input.name,
           role: input.role,
           permissionProfile: input.permissionProfile,
@@ -386,8 +452,15 @@ export class SubagentManager {
       })
     );
 
-    const context = await runtimeContext.services.context.compile({
-      cwd: session.cwd,
+    const childRuntimeContext: RuntimeContext = {
+      ...runtimeContext,
+      session: childSession,
+      eventBus: scopedChildEventBus,
+      storage: childStorage,
+      nonInteractive: true
+    };
+    const context = await childRuntimeContext.services.context.compile({
+      cwd: childSession.cwd,
       config: runtimeContext.config,
       prompt: input.prompt
     });
@@ -412,17 +485,19 @@ export class SubagentManager {
     let toolCalls = 0;
     let status: SubagentResult["status"] = "completed";
     let summary = "";
+    const filesChanged = new Set<string>();
+    const commandsRun = new Set<string>();
 
     try {
-      let result = await runtimeContext.services.models.call({
-        providerId: runtimeContext.config.modelProvider,
-        sessionId: session.id,
-        model: runtimeContext.config.model,
+      let result = await childRuntimeContext.services.models.call({
+        providerId: childRuntimeContext.config.modelProvider,
+        sessionId: childSession.id,
+        model: childRuntimeContext.config.model,
         messages,
         tools: nexusToolDefinitions().filter((tool) => allowedTools.has(tool.name)),
         context,
         observations,
-        eventBus: runtimeContext.eventBus
+        eventBus: scopedChildEventBus
       });
       modelTurns += 1;
       summary = result.message;
@@ -450,7 +525,7 @@ export class SubagentManager {
             });
             continue;
           }
-          const toolResult = await runtimeContext.services.tools.execute(
+          const toolResult = await childRuntimeContext.services.tools.execute(
             createToolRequest({
               id: toolCall.id as ToolCallId,
               toolName: toolCall.name,
@@ -459,24 +534,30 @@ export class SubagentManager {
               ...(toolCall.reason ? { reason: toolCall.reason } : {})
             }),
             {
-              sessionId: session.id,
-              cwd: session.cwd,
-              runDirectory: runtimeContext.storage.runDirectory,
+              sessionId: childSession.id,
+              cwd: childSession.cwd,
+              runDirectory: childStorage.runDirectory,
               config: {
-                ...runtimeContext.config,
+                ...childRuntimeContext.config,
                 sandboxMode:
                   input.permissionProfile === "read-only"
                     ? "read-only"
-                    : runtimeContext.config.sandboxMode
+                    : childRuntimeContext.config.sandboxMode
               },
-              eventBus: runtimeContext.eventBus,
-              security: runtimeContext.services.security,
-              approvals: runtimeContext.services.approvals,
-              sandbox: runtimeContext.services.sandbox,
+              eventBus: scopedChildEventBus,
+              security: childRuntimeContext.services.security,
+              approvals: childRuntimeContext.services.approvals,
+              sandbox: childRuntimeContext.services.sandbox,
               nonInteractive: true,
               planApproved: false
             }
           );
+          for (const file of toolResult.filesChanged) {
+            filesChanged.add(file);
+          }
+          for (const command of toolResult.commandsRun) {
+            commandsRun.add(command);
+          }
           observations.push(
             limitObservation(
               {
@@ -495,15 +576,15 @@ export class SubagentManager {
           break;
         }
 
-        result = await runtimeContext.services.models.call({
-          providerId: runtimeContext.config.modelProvider,
-          sessionId: session.id,
-          model: runtimeContext.config.model,
+        result = await childRuntimeContext.services.models.call({
+          providerId: childRuntimeContext.config.modelProvider,
+          sessionId: childSession.id,
+          model: childRuntimeContext.config.model,
           messages,
           tools: nexusToolDefinitions().filter((tool) => allowedTools.has(tool.name)),
           context,
           observations,
-          eventBus: runtimeContext.eventBus
+          eventBus: scopedChildEventBus
         });
         modelTurns += 1;
         summary = result.message;
@@ -511,6 +592,37 @@ export class SubagentManager {
     } catch (error) {
       status = "failed";
       summary = error instanceof Error ? error.message : String(error);
+    } finally {
+      await scopedChildEventBus.publish(
+        createEvent({
+          sessionId: childSession.id,
+          threadId: childSession.activeThreadId,
+          type: "subagent.completed",
+          data: {
+            subagentId: id,
+            parentSessionId: session.id,
+            name: input.name,
+            role: input.role,
+            status,
+            summary,
+            filesChanged: [...filesChanged],
+            commandsRun: [...commandsRun]
+          }
+        })
+      );
+      await childStorage.writeManifest(
+        createSubagentManifest({
+          childSession,
+          childStorage,
+          subagentId: id,
+          input,
+          status,
+          summary,
+          filesChanged: [...filesChanged],
+          commandsRun: [...commandsRun]
+        })
+      );
+      unsubscribeChildWriter();
     }
 
     await runtimeContext.eventBus.publish(
@@ -520,6 +632,9 @@ export class SubagentManager {
         type: "subagent.completed",
         data: {
           subagentId: id,
+          childSessionId,
+          childThreadId,
+          eventLogPath: childStorage.eventLogPath,
           name: input.name,
           role: input.role,
           status,
@@ -533,9 +648,83 @@ export class SubagentManager {
       name: input.name,
       role: input.role,
       status,
-      summary
+      summary,
+      childSessionId,
+      childThreadId,
+      eventLogPath: childStorage.eventLogPath
     };
   }
+}
+
+class ThreadScopedEventBus implements EventBus {
+  public constructor(
+    private readonly inner: EventBus,
+    private readonly threadId: ThreadId
+  ) {}
+
+  public publish(event: NexusEvent): Promise<void> {
+    return this.inner.publish({ ...event, threadId: event.threadId ?? this.threadId });
+  }
+
+  public subscribe(handler: (event: NexusEvent) => void | Promise<void>): () => void {
+    return this.inner.subscribe(handler);
+  }
+}
+
+async function recordParentChildSession(
+  storage: SessionStorage,
+  childSessionId: SessionId
+): Promise<void> {
+  const manifest = await storage.readManifest().catch(() => undefined);
+  if (!manifest) {
+    return;
+  }
+  await storage.writeManifest({
+    ...manifest,
+    childSessionIds: [...new Set([...(manifest.childSessionIds ?? []), childSessionId])]
+  });
+}
+
+function createSubagentManifest(input: {
+  childSession: NexusSession;
+  childStorage: SessionStorage;
+  subagentId: SubagentId;
+  input: SubagentRunInput;
+  status: "running" | "completed" | "failed";
+  summary?: string;
+  filesChanged: string[];
+  commandsRun: string[];
+}): Awaited<ReturnType<SessionStorage["readManifest"]>> {
+  return {
+    sessionId: input.childSession.id,
+    parentThreadId: input.input.session.activeThreadId,
+    startedAt: input.childSession.createdAt,
+    ...(input.status === "running" ? {} : { completedAt: nowIso() }),
+    cwd: input.childSession.cwd,
+    mode: input.childSession.mode,
+    model: input.childSession.config.model,
+    modelProvider: input.childSession.config.modelProvider,
+    sandboxMode:
+      input.input.permissionProfile === "read-only"
+        ? "read-only"
+        : input.childSession.config.sandboxMode,
+    approvalPolicy: input.childSession.config.approvalPolicy,
+    status: input.status === "running" ? "running" : "completed",
+    eventLogPath: input.childStorage.eventLogPath,
+    filesChanged: input.filesChanged,
+    commandsRun: input.commandsRun,
+    ...(input.childSession.parentSessionId
+      ? { parentSessionId: input.childSession.parentSessionId }
+      : {}),
+    subagent: {
+      id: input.subagentId,
+      name: input.input.name,
+      role: input.input.role,
+      permissionProfile: input.input.permissionProfile,
+      ...(input.status === "running" ? {} : { status: input.status })
+    },
+    artifacts: input.childStorage.artifacts
+  };
 }
 
 async function createAgentPlan(input: {

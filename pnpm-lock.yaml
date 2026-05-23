@@ -65,6 +65,9 @@ importers:
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
       zod:
         specifier: ^4.1.12
         version: 4.4.3
@@ -83,6 +86,9 @@ importers:
       "@nexus/shared":
         specifier: workspace:*
         version: link:../shared
+      "@nexus/storage":
+        specifier: workspace:*
+        version: link:../storage
       "@nexus/tool-bus":
         specifier: workspace:*
         version: link:../tool-bus
@@ -120,9 +126,15 @@ importers:
       "@nexus/storage":
         specifier: workspace:*
         version: link:../storage
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/evals:
     dependencies:
+      "@nexus/agent":
+        specifier: workspace:*
+        version: link:../agent
       "@nexus/config":
         specifier: workspace:*
         version: link:../config
@@ -135,12 +147,18 @@ importers:
       "@nexus/mcp":
         specifier: workspace:*
         version: link:../mcp
+      "@nexus/model-router":
+        specifier: workspace:*
+        version: link:../model-router
       "@nexus/provider-deepseek":
         specifier: workspace:*
         version: link:../providers/deepseek
       "@nexus/provider-openai":
         specifier: workspace:*
         version: link:../providers/openai
+      "@nexus/runtime":
+        specifier: workspace:*
+        version: link:../runtime
       "@nexus/security":
         specifier: workspace:*
         version: link:../security
@@ -150,6 +168,12 @@ importers:
       "@nexus/storage":
         specifier: workspace:*
         version: link:../storage
+      "@nexus/test-utils":
+        specifier: workspace:*
+        version: link:../test-utils
+      "@nexus/tool-bus":
+        specifier: workspace:*
+        version: link:../tool-bus
 
   packages/events:
     dependencies:

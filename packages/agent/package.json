@@ -22,6 +22,7 @@
     "@nexus/model-router": "workspace:*",
     "@nexus/runtime": "workspace:*",
     "@nexus/shared": "workspace:*",
+    "@nexus/storage": "workspace:*",
     "@nexus/tool-bus": "workspace:*"
   },
   "devDependencies": {

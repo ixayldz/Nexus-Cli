@@ -260,5 +260,14 @@ describe("sdlc manager", () => {
       commandsRun: ["pnpm test"]
     });
     expect(ready.status).toBe("ready");
+    expect(ready.prDescription).toContain("## Summary");
+    expect(ready.prDescription).toContain("## Reviewer Checklist");
+    expect(ready.changelog).toContain("### Changed");
+    expect(ready.releaseNotes).toContain("### Risks");
+    expect(ready.changedFilesSummary).toContain("Source: 1");
+    expect(ready.verificationSummary).toContain("pnpm test");
+    expect(ready.reviewerChecklist).toContain(
+      "Review source changes for correctness and API compatibility."
+    );
   });
 });

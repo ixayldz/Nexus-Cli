@@ -11,6 +11,6 @@ export default defineConfig({
   format: ["esm"],
   platform: "node",
   target: "node22",
-  external: ["ink", "react", "react-devtools-core", "smol-toml", "zod"],
+  external: ["ink", "react", "react-devtools-core", "smol-toml", "typescript", "zod"],
   noExternal: [/^@nexus\//]
 });

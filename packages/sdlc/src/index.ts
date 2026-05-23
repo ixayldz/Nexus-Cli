@@ -125,6 +125,23 @@ export interface ShipArtifact {
   reviewStatus: "passed" | "warnings" | "failed" | "missing";
   risks: string[];
   rollbackNote: string;
+  prTitle: string;
+  prDescription: string;
+  changelog: string;
+  releaseNotes: string;
+  riskSummary: string;
+  verificationSummary: string;
+  rollbackPlan: string;
+  changedFilesSummary: string;
+  reviewerChecklist: string[];
+  grounding: {
+    goal: string;
+    filesChanged: string[];
+    commandsRun: string[];
+    verificationStatus: "passed" | "failed" | "skipped" | "missing";
+    reviewStatus: "passed" | "warnings" | "failed" | "missing";
+    reviewFindingCount: number;
+  };
   createdAt: string;
 }
 
@@ -514,26 +531,65 @@ export class SdlcManager {
     await this.startStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "ship" });
     const verificationStatus = this.state.verification?.status ?? "missing";
     const reviewStatus = this.state.review?.status ?? "missing";
+    const filesChanged = [...new Set(input.filesChanged)].sort();
+    const commandsRun = [...new Set(input.commandsRun)].sort();
+    const reviewFindings = this.state.review?.findings ?? [];
     const risks = [
       ...(verificationStatus === "missing" ? ["Verification has not been recorded."] : []),
       ...(verificationStatus === "failed" ? ["Verification failed."] : []),
       ...(reviewStatus === "missing" ? ["Review has not been recorded."] : []),
-      ...(reviewStatus === "failed" ? ["Review failed."] : [])
+      ...(reviewStatus === "failed" ? ["Review failed."] : []),
+      ...reviewFindings
+        .filter((finding) => finding.severity === "high" || finding.severity === "critical")
+        .map((finding) => `${finding.severity.toUpperCase()}: ${finding.title}`)
     ];
+    const goal = this.state.goal?.text ?? this.state.plan?.goal ?? "Nexus session changes";
+    const rollbackPlan =
+      input.rollbackNote ??
+      "Use recorded checkpoints or git diff to revert this session's changes.";
+    const changedFilesSummary = summarizeChangedFiles(filesChanged);
+    const verificationSummary = summarizeVerification(this.state.verification, commandsRun);
+    const riskSummary = summarizeShipRisks(risks, reviewFindings);
+    const reviewerChecklist = buildReviewerChecklist(filesChanged, reviewFindings);
     const artifact: ShipArtifact = {
       status: risks.length === 0 ? "ready" : "blocked",
       summary:
         risks.length === 0
-          ? `Ready to ship ${input.filesChanged.length} changed file(s).`
+          ? `Ready to ship ${filesChanged.length} changed file(s).`
           : `Blocked by ${risks.length} release gate(s).`,
-      filesChanged: [...new Set(input.filesChanged)].sort(),
-      commandsRun: [...new Set(input.commandsRun)].sort(),
+      filesChanged,
+      commandsRun,
       verificationStatus,
       reviewStatus,
       risks,
-      rollbackNote:
-        input.rollbackNote ??
-        "Use recorded checkpoints or git diff to revert this session's changes.",
+      rollbackNote: rollbackPlan,
+      prTitle: createPrTitle(goal, filesChanged),
+      prDescription: buildPrDescription({
+        goal,
+        filesChanged,
+        changedFilesSummary,
+        verificationSummary,
+        reviewStatus,
+        reviewFindings,
+        riskSummary,
+        rollbackPlan,
+        reviewerChecklist
+      }),
+      changelog: buildChangelog(filesChanged, goal),
+      releaseNotes: buildReleaseNotes(goal, changedFilesSummary, riskSummary),
+      riskSummary,
+      verificationSummary,
+      rollbackPlan,
+      changedFilesSummary,
+      reviewerChecklist,
+      grounding: {
+        goal,
+        filesChanged,
+        commandsRun,
+        verificationStatus,
+        reviewStatus,
+        reviewFindingCount: reviewFindings.length
+      },
       createdAt: nowIso()
     };
     this.state = {
@@ -642,6 +698,192 @@ export class SdlcManager {
       })
     );
   }
+}
+
+function createPrTitle(goal: string, filesChanged: string[]): string {
+  if (goal.trim()) {
+    return goal.trim().slice(0, 80);
+  }
+  const category = dominantFileCategory(filesChanged);
+  return `Update ${category} changes`;
+}
+
+function buildPrDescription(input: {
+  goal: string;
+  filesChanged: string[];
+  changedFilesSummary: string;
+  verificationSummary: string;
+  reviewStatus: ShipArtifact["reviewStatus"];
+  reviewFindings: ReviewFinding[];
+  riskSummary: string;
+  rollbackPlan: string;
+  reviewerChecklist: string[];
+}): string {
+  const findings =
+    input.reviewFindings.length > 0
+      ? input.reviewFindings
+          .map(
+            (finding) =>
+              `- ${finding.severity}: ${finding.title}${finding.file ? ` (${finding.file})` : ""}`
+          )
+          .join("\n")
+      : `- Review status: ${input.reviewStatus}`;
+  return [
+    "## Summary",
+    `- ${input.goal}`,
+    "",
+    "## Changes",
+    input.changedFilesSummary,
+    "",
+    "## Verification",
+    input.verificationSummary,
+    "",
+    "## Review Findings",
+    findings,
+    "",
+    "## Risks",
+    input.riskSummary,
+    "",
+    "## Rollback Plan",
+    input.rollbackPlan,
+    "",
+    "## Reviewer Checklist",
+    ...input.reviewerChecklist.map((item) => `- [ ] ${item}`)
+  ].join("\n");
+}
+
+function buildChangelog(filesChanged: string[], goal: string): string {
+  const categories = categorizeFiles(filesChanged);
+  const lines = ["### Changed"];
+  lines.push(`- ${goal}`);
+  if (categories.tests > 0) {
+    lines.push(`- Updated or reviewed ${categories.tests} test-related file(s).`);
+  }
+  if (categories.docs > 0) {
+    lines.push(`- Updated ${categories.docs} documentation file(s).`);
+  }
+  if (categories.dependencies > 0) {
+    lines.push(`- Updated ${categories.dependencies} dependency/package file(s).`);
+  }
+  return lines.join("\n");
+}
+
+function buildReleaseNotes(goal: string, changedFilesSummary: string, riskSummary: string): string {
+  return [
+    "### Summary",
+    `- ${goal}`,
+    "",
+    "### Changed Files",
+    changedFilesSummary,
+    "",
+    "### Risks",
+    riskSummary
+  ].join("\n");
+}
+
+function summarizeChangedFiles(filesChanged: string[]): string {
+  if (filesChanged.length === 0) {
+    return "- No recorded file changes.";
+  }
+  const categories = categorizeFiles(filesChanged);
+  return [
+    `- Files changed: ${filesChanged.length}`,
+    `- Source: ${categories.source}`,
+    `- Tests: ${categories.tests}`,
+    `- Docs: ${categories.docs}`,
+    `- Config/CI: ${categories.config}`,
+    `- Dependencies: ${categories.dependencies}`,
+    ...filesChanged.slice(0, 20).map((file) => `- ${file}`)
+  ].join("\n");
+}
+
+function summarizeVerification(
+  verification: VerificationReport | undefined,
+  commandsRun: string[]
+): string {
+  if (!verification) {
+    return "- Verification has not been recorded.";
+  }
+  return [
+    `- Status: ${verification.status}`,
+    verification.command ? `- Command: ${verification.command}` : "- Command: not recorded",
+    `- Summary: ${verification.summary}`,
+    ...(commandsRun.length > 0 ? [`- Commands run: ${commandsRun.join(", ")}`] : [])
+  ].join("\n");
+}
+
+function summarizeShipRisks(risks: string[], findings: ReviewFinding[]): string {
+  if (risks.length === 0 && findings.length === 0) {
+    return "- No blocking risks were recorded by Nexus gates.";
+  }
+  return [
+    ...risks.map((risk) => `- ${risk}`),
+    ...findings
+      .filter((finding) => finding.severity !== "high" && finding.severity !== "critical")
+      .slice(0, 10)
+      .map((finding) => `- ${finding.severity}: ${finding.title}`)
+  ].join("\n");
+}
+
+function buildReviewerChecklist(filesChanged: string[], findings: ReviewFinding[]): string[] {
+  const categories = categorizeFiles(filesChanged);
+  const checklist = ["Confirm the implementation matches the stated goal."];
+  if (categories.source > 0) {
+    checklist.push("Review source changes for correctness and API compatibility.");
+  }
+  if (categories.tests > 0) {
+    checklist.push("Confirm tests cover the changed behavior and are not focused/skipped.");
+  } else if (categories.source > 0) {
+    checklist.push("Confirm existing tests cover the source changes or request focused coverage.");
+  }
+  if (categories.dependencies > 0) {
+    checklist.push("Review package and lockfile changes together.");
+  }
+  if (categories.config > 0) {
+    checklist.push("Review configuration/CI changes for release impact.");
+  }
+  if (findings.some((finding) => finding.category === "security")) {
+    checklist.push(
+      "Review security findings and confirm no secret or unsafe execution path ships."
+    );
+  }
+  return [...new Set(checklist)];
+}
+
+function dominantFileCategory(filesChanged: string[]): string {
+  const categories = categorizeFiles(filesChanged);
+  const entries = Object.entries(categories).sort((left, right) => right[1] - left[1]);
+  return entries[0]?.[0] ?? "session";
+}
+
+function categorizeFiles(filesChanged: string[]): {
+  source: number;
+  tests: number;
+  docs: number;
+  config: number;
+  dependencies: number;
+  other: number;
+} {
+  const result = { source: 0, tests: 0, docs: 0, config: 0, dependencies: 0, other: 0 };
+  for (const file of filesChanged) {
+    if (isLockfile(file) || isPackageManifest(file)) {
+      result.dependencies += 1;
+    } else if (isTestFile(file)) {
+      result.tests += 1;
+    } else if (/\.(?:md|mdx|rst)$/i.test(file) || file.startsWith("docs/")) {
+      result.docs += 1;
+    } else if (
+      /(?:^|[/\\])(?:\.github|\.nexus|config|configs)[/\\]/i.test(file) ||
+      /\.(?:json|toml|ya?ml)$/i.test(file)
+    ) {
+      result.config += 1;
+    } else if (isSourceFile(file)) {
+      result.source += 1;
+    } else {
+      result.other += 1;
+    }
+  }
+  return result;
 }
 
 function createDefinitionOfDone(goal: string): DefinitionOfDoneItem[] {

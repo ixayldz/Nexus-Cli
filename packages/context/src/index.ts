@@ -3,6 +3,7 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import * as ts from "typescript";
 import { type ResolvedConfig } from "@nexus/config";
 import { PromptInjectionDetector, type PromptInjectionFinding } from "@nexus/security";
 import { safeReadTextFile } from "@nexus/storage";
@@ -76,6 +77,10 @@ export interface SymbolIndexEntry {
   path: string;
   line: number;
   exported: boolean;
+  defaultExport?: boolean;
+  component?: boolean;
+  imports?: string[];
+  reExports?: string[];
 }
 
 export interface TestMapEntry {
@@ -139,7 +144,13 @@ export class ContextCompiler {
     const packageManager = detectPackageManager(topLevelFiles);
     const workspacePackages = await buildWorkspacePackages(repoRoot, repoMap);
     const symbols = await buildSymbolIndex(repoRoot, repoMap);
-    const testMap = buildTestMap(repoMap, packageManager, packageJson.scripts, workspacePackages);
+    const testMap = await buildTestMap(
+      repoRoot,
+      repoMap,
+      packageManager,
+      packageJson.scripts,
+      workspacePackages
+    );
     const git = await readGitContext(repoRoot);
     const memories = await readMemories(repoRoot, this.options.userMemoryRoot);
     const mentions = await resolveMentions(repoRoot, input.prompt ?? "");
@@ -406,16 +417,12 @@ async function buildSymbolIndex(repoRoot: string, repoMap: RepoMap): Promise<Sym
     if (!content) {
       continue;
     }
-    const lines = content.split(/\r?\n/);
-    for (const [index, line] of lines.entries()) {
-      const parsed = parseSymbolLine(line);
-      if (!parsed) {
-        continue;
-      }
+    const astSymbols = parseAstSymbols(file, content);
+    const parsedSymbols = astSymbols.length > 0 ? astSymbols : parseRegexSymbols(file, content);
+    for (const parsed of parsedSymbols) {
       symbols.push({
         ...parsed,
-        path: file,
-        line: index + 1
+        path: file
       });
       if (symbols.length >= 500) {
         return symbols;
@@ -425,24 +432,125 @@ async function buildSymbolIndex(repoRoot: string, repoMap: RepoMap): Promise<Sym
   return symbols;
 }
 
-function buildTestMap(
+async function buildTestMap(
+  repoRoot: string,
   repoMap: RepoMap,
   packageManager: "pnpm" | "npm" | "yarn" | "unknown",
   packageScripts: Record<string, string>,
   workspacePackages: WorkspacePackageContext[]
-): TestMapEntry[] {
+): Promise<TestMapEntry[]> {
   const repoFiles = repoMap.files.map((file) => normalizePath(file.path));
   const fileSet = new Set(repoFiles);
   const defaultCommand = detectTestCommands(packageManager, packageScripts, workspacePackages)[0];
+  const sourceToTests = new Map<string, Set<string>>();
+  for (const sourcePath of repoFiles.filter(isSourceFile).slice(0, 200)) {
+    sourceToTests.set(sourcePath, new Set(findLikelyTestsForSource(sourcePath, fileSet)));
+  }
+
+  for (const testPath of repoFiles.filter(isTestFile).slice(0, 200)) {
+    const content = await readOptionalText(join(repoRoot, testPath));
+    if (!content) {
+      continue;
+    }
+    for (const specifier of parseAstImports(testPath, content)) {
+      const sourcePath = resolveImportedSource(testPath, specifier, fileSet);
+      if (!sourcePath || !isSourceFile(sourcePath)) {
+        continue;
+      }
+      const tests = sourceToTests.get(sourcePath) ?? new Set<string>();
+      tests.add(testPath);
+      sourceToTests.set(sourcePath, tests);
+    }
+  }
+
   return repoFiles
     .filter(isSourceFile)
     .slice(0, 200)
     .map((sourcePath) => ({
       sourcePath,
-      testPaths: findLikelyTestsForSource(sourcePath, fileSet),
+      testPaths: [...(sourceToTests.get(sourcePath) ?? new Set<string>())].sort().slice(0, 8),
       ...(defaultCommand ? { command: defaultCommand } : {})
     }))
     .filter((entry) => entry.testPaths.length > 0 || entry.command);
+}
+
+function parseAstSymbols(filePath: string, content: string): Array<Omit<SymbolIndexEntry, "path">> {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(filePath)
+  );
+  const imports = parseAstImports(filePath, content);
+  const reExports = parseAstReExports(sourceFile);
+  const symbols: Array<Omit<SymbolIndexEntry, "path">> = [];
+  const addSymbol = (
+    node: ts.Node,
+    name: string | undefined,
+    kind: SymbolIndexEntry["kind"],
+    exported: boolean,
+    defaultExport = false
+  ): void => {
+    if (!name) {
+      return;
+    }
+    const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+    symbols.push({
+      name,
+      kind,
+      line,
+      exported,
+      ...(defaultExport ? { defaultExport } : {}),
+      ...(isLikelyComponent(filePath, name, kind) ? { component: true } : {}),
+      ...(imports.length > 0 ? { imports } : {}),
+      ...(reExports.length > 0 ? { reExports } : {})
+    });
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node)) {
+      addSymbol(node, node.name?.text, "function", hasExport(node), hasDefaultExport(node));
+    } else if (ts.isClassDeclaration(node)) {
+      addSymbol(node, node.name?.text, "class", hasExport(node), hasDefaultExport(node));
+    } else if (ts.isInterfaceDeclaration(node)) {
+      addSymbol(node, node.name.text, "interface", hasExport(node));
+    } else if (ts.isTypeAliasDeclaration(node)) {
+      addSymbol(node, node.name.text, "type", hasExport(node));
+    } else if (ts.isVariableStatement(node)) {
+      for (const declaration of node.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) {
+          addSymbol(node, declaration.name.text, "const", hasExport(node));
+        }
+      }
+    } else if (ts.isExportDeclaration(node) && node.exportClause) {
+      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      if (ts.isNamedExports(node.exportClause)) {
+        for (const element of node.exportClause.elements) {
+          symbols.push({
+            name: element.name.text,
+            kind: "export",
+            line,
+            exported: true,
+            ...(reExports.length > 0 ? { reExports } : {})
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return symbols.slice(0, 500);
+}
+
+function parseRegexSymbols(file: string, content: string): Array<Omit<SymbolIndexEntry, "path">> {
+  return content
+    .split(/\r?\n/)
+    .map((line, index) => {
+      const parsed = parseSymbolLine(line);
+      return parsed ? { ...parsed, line: index + 1 } : undefined;
+    })
+    .filter((symbol): symbol is Omit<SymbolIndexEntry, "path"> => Boolean(symbol));
 }
 
 function parseSymbolLine(line: string): Omit<SymbolIndexEntry, "path" | "line"> | undefined {
@@ -480,20 +588,138 @@ function parseSymbolLine(line: string): Omit<SymbolIndexEntry, "path" | "line"> 
   };
 }
 
+function scriptKindForPath(filePath: string): ts.ScriptKind {
+  if (/\.tsx$/i.test(filePath)) {
+    return ts.ScriptKind.TSX;
+  }
+  if (/\.jsx$/i.test(filePath)) {
+    return ts.ScriptKind.JSX;
+  }
+  if (/\.mjs$|\.js$/i.test(filePath)) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
+}
+
+function hasExport(node: ts.Node): boolean {
+  return Boolean(
+    ts.canHaveModifiers(node) &&
+    ts
+      .getModifiers(node)
+      ?.some(
+        (modifier) =>
+          modifier.kind === ts.SyntaxKind.ExportKeyword ||
+          modifier.kind === ts.SyntaxKind.DefaultKeyword
+      )
+  );
+}
+
+function hasDefaultExport(node: ts.Node): boolean {
+  return Boolean(
+    ts.canHaveModifiers(node) &&
+    ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+  );
+}
+
+function parseAstImports(filePath: string, content: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(filePath)
+  );
+  const imports: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text.startsWith(".")
+    ) {
+      imports.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] &&
+      ts.isStringLiteral(node.arguments[0]) &&
+      node.arguments[0].text.startsWith(".")
+    ) {
+      imports.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...new Set(imports)].sort();
+}
+
+function parseAstReExports(sourceFile: ts.SourceFile): string[] {
+  const reExports: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      reExports.push(node.moduleSpecifier.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...new Set(reExports)].sort();
+}
+
+function isLikelyComponent(
+  filePath: string,
+  name: string,
+  kind: SymbolIndexEntry["kind"]
+): boolean {
+  return /\.(?:tsx|jsx)$/.test(filePath) && kind !== "type" && /^[A-Z][A-Za-z0-9]*$/.test(name);
+}
+
 function findLikelyTestsForSource(sourcePath: string, fileSet: Set<string>): string[] {
   const directory = dirname(sourcePath).replaceAll("\\", "/");
   const stem = basename(sourcePath).replace(/\.(?:ts|tsx|js|jsx|mjs|cjs)$/, "");
   const extensions = [".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx", ".test.js", ".spec.js"];
-  return extensions
-    .flatMap((extension) => [
-      `${directory}/${stem}${extension}`.replace(/^\.\//, ""),
-      `${directory}/__tests__/${stem}${extension}`.replace(/^\.\//, "")
-    ])
+  const candidates = extensions.flatMap((extension) => [
+    `${directory}/${stem}${extension}`.replace(/^\.\//, ""),
+    `${directory}/__tests__/${stem}${extension}`.replace(/^\.\//, ""),
+    `${directory}/test/${stem}${extension}`.replace(/^\.\//, ""),
+    `${directory}/tests/${stem}${extension}`.replace(/^\.\//, ""),
+    ...ancestorTestCandidates(directory, stem, extension)
+  ]);
+  return candidates
     .filter(
       (candidate, index, candidates) =>
         fileSet.has(candidate) && candidates.indexOf(candidate) === index
     )
     .slice(0, 5);
+}
+
+function ancestorTestCandidates(directory: string, stem: string, extension: string): string[] {
+  const parts = directory.split("/").filter(Boolean);
+  const candidates: string[] = [];
+  for (let index = parts.length; index >= 0; index -= 1) {
+    const prefix = parts.slice(0, index).join("/");
+    for (const folder of ["test", "tests", "__tests__"]) {
+      candidates.push(`${prefix ? `${prefix}/` : ""}${folder}/${stem}${extension}`);
+    }
+  }
+  return candidates;
+}
+
+function resolveImportedSource(
+  importerPath: string,
+  specifier: string,
+  fileSet: Set<string>
+): string | undefined {
+  const base = normalizePath(join(dirname(importerPath), specifier));
+  const candidates = [
+    base,
+    ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].map((extension) => `${base}${extension}`),
+    ...["index.ts", "index.tsx", "index.js", "index.jsx"].map((file) => `${base}/${file}`)
+  ].map((candidate) => normalizePath(candidate));
+  return candidates.find((candidate) => fileSet.has(candidate));
 }
 
 function isSourceFile(path: string): boolean {

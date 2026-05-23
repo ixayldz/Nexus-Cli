@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { type SessionId, safeJsonStringify } from "@nexus/shared";
+import { type SessionId, type ThreadId, safeJsonStringify } from "@nexus/shared";
 
 export interface SessionManifest {
   sessionId: SessionId;
   parentSessionId?: SessionId;
+  parentThreadId?: ThreadId;
+  childSessionIds?: SessionId[];
   startedAt: string;
   completedAt?: string;
   cwd: string;
@@ -28,6 +30,13 @@ export interface SessionManifest {
     transcriptMessageCount: number;
     sdlcStageCount: number;
     learningCandidateCount: number;
+  };
+  subagent?: {
+    id: string;
+    name: string;
+    role: string;
+    permissionProfile: string;
+    status?: "completed" | "failed";
   };
   artifacts?: {
     finalAnswerPath: string;

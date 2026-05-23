@@ -21,6 +21,7 @@
     "@nexus/config": "workspace:*",
     "@nexus/security": "workspace:*",
     "@nexus/shared": "workspace:*",
-    "@nexus/storage": "workspace:*"
+    "@nexus/storage": "workspace:*",
+    "typescript": "^5.9.3"
   }
 }

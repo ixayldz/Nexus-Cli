@@ -541,7 +541,7 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
           output.write(`${utilityMessage}\n`);
           return true;
         }
-        output.write(`${intent.message ?? "Command recognized but not implemented."}\n`);
+        output.write(`${intent.message ?? "Unsupported slash command. Use /help."}\n`);
         return true;
       }
 
@@ -860,9 +860,7 @@ async function runUtilityTopLevelCommand(parsed: ParsedArgs): Promise<void> {
       process.stdout.write(`${await initializeProject(cwd)}\n`);
       return;
     case "completion":
-      process.stdout.write(
-        "Shell completion generation is not persisted automatically; use the documented slash commands from nexus --help.\n"
-      );
+      process.stdout.write(`${renderShellCompletion()}\n`);
       return;
     case "features": {
       const config = await resolveConfig({
@@ -894,14 +892,10 @@ async function runUtilityTopLevelCommand(parsed: ParsedArgs): Promise<void> {
       return;
     }
     case "ship":
-      process.stdout.write(
-        "Ship artifacts are generated inside an active session with /ship after verification and review gates run.\n"
-      );
+      process.stdout.write(`${await renderLatestShipArtifact(cwd)}\n`);
       return;
     case "memories":
-      process.stdout.write(
-        "Memory management is available inside an active session with /memories.\n"
-      );
+      process.stdout.write(`${await renderTopLevelMemories(cwd)}\n`);
       return;
     case "update":
       process.stdout.write(
@@ -922,8 +916,65 @@ async function runUtilityTopLevelCommand(parsed: ParsedArgs): Promise<void> {
       );
       return;
     default:
-      process.stdout.write("Command recognized. Use nexus --help for supported options.\n");
+      process.stdout.write("Unsupported command. Use nexus --help for supported options.\n");
   }
+}
+
+function renderShellCompletion(): string {
+  const commands = [
+    "exec",
+    "resume",
+    "fork",
+    "login",
+    "logout",
+    "mcp",
+    "skills",
+    "hooks",
+    "init",
+    "features",
+    "sandbox",
+    "ship",
+    "memories",
+    "completion"
+  ];
+  return [
+    "# Nexus command completions",
+    "# Add these words to your shell completion system of choice.",
+    commands.join(" ")
+  ].join("\n");
+}
+
+async function renderLatestShipArtifact(cwd: string): Promise<string> {
+  const [latest] = await listSessionManifests({ cwd });
+  const shipPath = latest?.artifacts?.shipPath;
+  if (!latest || !shipPath) {
+    return "No local session with a ship artifact was found. Run `nexus`, complete verification/review, then use `/ship`.";
+  }
+  const content = await readFile(shipPath, "utf8").catch(() => undefined);
+  if (!content) {
+    return `Latest session has no ship artifact yet: ${latest.sessionId}. Run /ship inside that session.`;
+  }
+  return [`Latest ship artifact: ${shipPath}`, content.trim()].join("\n");
+}
+
+async function renderTopLevelMemories(cwd: string): Promise<string> {
+  const config = await resolveConfig({ cwd });
+  const learning = new LearningPlane({
+    mode: config.learning.mode,
+    requireUserConfirmation: config.learning.requireUserConfirmation
+  });
+  const memories = await learning.listMemories(cwd);
+  if (memories.length === 0) {
+    return [
+      "No memories are stored for this workspace.",
+      `Project memory: ${join(cwd, ".nexus", "learning", "project-memory.md")}`,
+      `User memory: ${join(homedir(), ".nexus", "memories", "user-memory.md")}`
+    ].join("\n");
+  }
+  return [
+    `Stored memories: ${memories.length}`,
+    ...memories.slice(0, 20).map((memory) => `- ${memory.scope}/${memory.type}: ${memory.text}`)
+  ].join("\n");
 }
 
 type AuthProviderId = "deepseek" | "openai";
@@ -1540,7 +1591,7 @@ async function handleFullscreenIntent(inputData: {
     return true;
   }
 
-  await inputData.publishMessage(intent.message ?? "Command recognized but not implemented.");
+  await inputData.publishMessage(intent.message ?? "Unsupported slash command. Use /help.");
   return true;
 }
 
@@ -3090,20 +3141,21 @@ function parseArgs(args: string[]): ParsedArgs {
     }
 
     if (!commandSelected && isKnownCommand(arg)) {
+      const selectedCommand = arg === "mcp-server" ? "mcp" : arg;
       commandSelected = true;
       parseState.command =
-        arg === "exec" ||
-        arg === "resume" ||
-        arg === "fork" ||
-        arg === "login" ||
-        arg === "logout" ||
-        arg === "mcp" ||
-        arg === "skills" ||
-        arg === "hooks"
-          ? arg
+        selectedCommand === "exec" ||
+        selectedCommand === "resume" ||
+        selectedCommand === "fork" ||
+        selectedCommand === "login" ||
+        selectedCommand === "logout" ||
+        selectedCommand === "mcp" ||
+        selectedCommand === "skills" ||
+        selectedCommand === "hooks"
+          ? selectedCommand
           : "utility";
       if (parseState.command === "utility") {
-        parseState.utilityCommand = arg;
+        parseState.utilityCommand = selectedCommand;
       }
       continue;
     }
@@ -3279,7 +3331,10 @@ function isKnownCommand(value: string): boolean {
     "hooks",
     "init",
     "features",
-    "sandbox"
+    "sandbox",
+    "ship",
+    "memories",
+    "completion"
   ].includes(value);
 }
 
@@ -3364,6 +3419,9 @@ Commands:
   init                 Create .nexus/config.toml and AGENTS.md starter files
   features             Print resolved feature flags as JSON
   sandbox              Show sandbox status; use "sandbox doctor" for availability
+  ship                 Print the latest recorded ship artifact
+  memories             Inspect stored local memories for this workspace
+  completion           Print command words for shell completion integration
   login/logout         Manage provider auth in the configured auth file
   --json               Stream JSONL events to stdout
   --model, -m          Override active model
