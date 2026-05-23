@@ -6,21 +6,24 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
   stat,
   unlink,
   writeFile
 } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { type ResolvedConfig } from "@nexus/config";
 import { type EventBus, createEvent } from "@nexus/events";
 import {
   type ApprovalCoordinator,
+  type PathGuardResult,
   type SecurityRuntime,
   classifyCommandRisk
 } from "@nexus/security";
 import { type SandboxContext, type SandboxManager } from "@nexus/sandbox";
 import {
+  NexusError,
   type RiskLevel,
   type SessionId,
   type ToolCallId,
@@ -29,6 +32,7 @@ import {
   redactString,
   safeJsonStringify
 } from "@nexus/shared";
+import { safeAtomicWriteText, safeReadTextFile } from "@nexus/storage";
 
 export interface ToolRequest {
   id: ToolCallId;
@@ -78,6 +82,17 @@ export interface FileCheckpoint {
   createdAt: string;
   toolCallId?: ToolCallId;
 }
+
+export interface TransactionCheckpoint {
+  id: string;
+  type: "transaction";
+  sessionId: SessionId;
+  childCheckpointIds: string[];
+  createdAt: string;
+  toolCallId?: ToolCallId;
+}
+
+type CheckpointRecord = FileCheckpoint | TransactionCheckpoint;
 
 export interface RollbackResult {
   status: "restored" | "refused" | "not_found";
@@ -207,12 +222,7 @@ export class ToolBus {
           }
         })
       );
-      return this.completeDenied(
-        request,
-        ctx,
-        policy.reason,
-        policy.reason.includes("sandbox") ? 3 : 5
-      );
+      return this.completeDenied(request, ctx, policy.reason, policyDeniedExitCode(policy.reason));
     }
 
     if (requiresPlanBeforeMutation(request, ctx)) {
@@ -339,30 +349,40 @@ export class ToolBus {
       }
     }
 
-    const sandbox = await executionCtx.sandbox?.prepare({
-      mode: executionCtx.config.sandboxMode,
-      platform: process.platform,
-      requiresHardSandbox: executionCtx.config.security.requireHardSandbox,
-      cwd: executionCtx.cwd,
-      config: {
-        preferredAdapter: executionCtx.config.sandbox.preferredAdapter,
-        container: {
-          runtime: executionCtx.config.sandbox.containerRuntime,
-          image: executionCtx.config.sandbox.containerImage,
-          network: executionCtx.config.sandbox.containerNetwork,
-          envAllowlist: executionCtx.config.sandbox.envAllowlist,
-          timeoutMs: executionCtx.config.sandbox.timeoutMs,
-          ...(executionCtx.config.sandbox.memoryLimitMb !== undefined
-            ? { memoryLimitMb: executionCtx.config.sandbox.memoryLimitMb }
-            : {}),
-          ...(executionCtx.config.sandbox.cpuLimit !== undefined
-            ? { cpuLimit: executionCtx.config.sandbox.cpuLimit }
-            : {})
-        }
-      }
-    });
+    const hardSandboxRequired =
+      executionCtx.config.security.requireHardSandbox ||
+      requiresHardSandboxForTool(request.toolName);
+    const sandbox = executionCtx.sandbox
+      ? await executionCtx.sandbox.prepare({
+          mode: executionCtx.config.sandboxMode,
+          platform: process.platform,
+          requiresHardSandbox: hardSandboxRequired,
+          cwd: executionCtx.cwd,
+          config: {
+            preferredAdapter: executionCtx.config.sandbox.preferredAdapter,
+            container: {
+              runtime: executionCtx.config.sandbox.containerRuntime,
+              image: executionCtx.config.sandbox.containerImage,
+              network: executionCtx.config.sandbox.containerNetwork,
+              envAllowlist: executionCtx.config.sandbox.envAllowlist,
+              timeoutMs: executionCtx.config.sandbox.timeoutMs,
+              ...(executionCtx.config.sandbox.memoryLimitMb !== undefined
+                ? { memoryLimitMb: executionCtx.config.sandbox.memoryLimitMb }
+                : {}),
+              ...(executionCtx.config.sandbox.cpuLimit !== undefined
+                ? { cpuLimit: executionCtx.config.sandbox.cpuLimit }
+                : {})
+            }
+          }
+        })
+      : hardSandboxRequired
+        ? {
+            ok: false,
+            reason: "Hard sandbox enforcement is required, but no sandbox manager is configured."
+          }
+        : undefined;
     if (sandbox && !sandbox.ok) {
-      if (executionCtx.config.security.requireHardSandbox) {
+      if (hardSandboxRequired) {
         await executionCtx.eventBus.publish(
           createEvent({
             sessionId: executionCtx.sessionId,
@@ -503,6 +523,20 @@ function requiresPlanBeforeMutation(request: ToolRequest, ctx: ToolExecutionCont
   );
 }
 
+function requiresHardSandboxForTool(toolName: string): boolean {
+  return toolName === "shell.run" || toolName === "test.run";
+}
+
+function policyDeniedExitCode(reason: string): number {
+  if (reason.includes("sandbox")) {
+    return 3;
+  }
+  if (reason.toLowerCase().includes("approval")) {
+    return 2;
+  }
+  return 5;
+}
+
 export class RollbackManager {
   public async rollback(input: {
     checkpointId: string;
@@ -516,7 +550,7 @@ export class RollbackManager {
       })
     );
 
-    const checkpoint = await readCheckpoint(input.ctx.runDirectory, input.checkpointId);
+    const checkpoint = await readCheckpointRecord(input.ctx.runDirectory, input.checkpointId);
     if (!checkpoint) {
       const result: RollbackResult = {
         status: "not_found",
@@ -528,35 +562,13 @@ export class RollbackManager {
       return result;
     }
 
-    const guarded = await input.ctx.security.guardPath({
-      cwd: input.ctx.cwd,
-      path: checkpoint.filePath,
-      config: input.ctx.config,
-      operation: "write"
-    });
-    if (!guarded.allowed) {
-      const result: RollbackResult = {
-        status: "refused",
-        checkpointId: checkpoint.id,
-        restoredFiles: [],
-        refusedReason: guarded.reason ?? "Rollback target was denied by policy."
-      };
+    const result = isTransactionCheckpoint(checkpoint)
+      ? await restoreTransactionCheckpoint(checkpoint, input.ctx)
+      : await restoreFileCheckpoint(checkpoint, input.ctx);
+    if (result.status !== "restored") {
       await publishRollbackRefused(input.ctx, result);
       return result;
     }
-
-    if (checkpoint.beforeContent === null) {
-      await unlink(guarded.absolutePath).catch(() => undefined);
-    } else {
-      await mkdir(dirname(guarded.absolutePath), { recursive: true });
-      await writeFile(guarded.absolutePath, checkpoint.beforeContent, "utf8");
-    }
-
-    const result: RollbackResult = {
-      status: "restored",
-      checkpointId: checkpoint.id,
-      restoredFiles: [guarded.relativePath]
-    };
     await input.ctx.eventBus.publish(
       createEvent({
         sessionId: input.ctx.sessionId,
@@ -790,56 +802,113 @@ export class PatchApplyTool implements NexusTool<
     ctx: ToolExecutionContext
   ): Promise<PatchApplyOutput> {
     const filePatches = parseUnifiedPatch(input.patch);
-    const changedFiles: string[] = [];
+    const operations: PatchOperation[] = [];
+    const changedFiles = new Set<string>();
+    const createdFiles = new Set<string>();
+    const deletedFiles = new Set<string>();
+    const modifiedFiles = new Set<string>();
+    const renamedFiles: Array<{ from: string; to: string }> = [];
     const checkpoints: string[] = [];
+    const fileCheckpointIds: string[] = [];
     const diff = redactString(input.patch);
 
     for (const patch of filePatches) {
-      const guarded = await ctx.security.guardPath({
-        cwd: ctx.cwd,
-        path: patch.path,
-        config: ctx.config,
-        operation: "write",
-        allowProtected: ctx.approvalGranted === true
-      });
-      if (!guarded.allowed) {
-        throw new Error(guarded.reason ?? "Path denied by policy.");
-      }
+      operations.push(await preparePatchOperation(patch, ctx));
+    }
 
-      const beforeContent = await readFile(guarded.absolutePath, "utf8").catch(() => "");
-      const afterContent = applyFilePatch(beforeContent, patch);
-      if (!input.dryRun) {
-        await mkdir(dirname(guarded.absolutePath), { recursive: true });
-        const checkpoint = await createCheckpoint({
-          ctx,
-          filePath: guarded.relativePath,
-          absolutePath: guarded.absolutePath,
-          beforeContent
-        });
-        checkpoints.push(checkpoint.id);
-        await writeFile(guarded.absolutePath, afterContent, "utf8");
-        await ctx.eventBus.publish(
-          createEvent({
-            sessionId: ctx.sessionId,
-            type: "file.changed",
-            data: { path: guarded.relativePath, checkpointId: checkpoint.id, diff }
-          })
+    if (!input.dryRun) {
+      try {
+        for (const operation of operations) {
+          await applyPatchOperation(operation, ctx, (checkpointId) => {
+            fileCheckpointIds.push(checkpointId);
+          });
+        }
+      } catch (error) {
+        if (fileCheckpointIds.length === 0) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        let rollback: RollbackResult;
+        try {
+          const transaction = await createTransactionCheckpoint({
+            ctx,
+            childCheckpointIds: fileCheckpointIds
+          });
+          rollback = await new RollbackManager().rollback({
+            checkpointId: transaction.id,
+            ctx
+          });
+        } catch (rollbackError) {
+          const rollbackMessage =
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+          throw new Error(
+            `Patch apply failed after partial mutation: ${message}. Automatic rollback failed: ${rollbackMessage}`
+          );
+        }
+        throw new Error(
+          `Patch apply failed after partial mutation: ${message}. Automatic rollback ${rollback.status}.`
         );
       }
-      changedFiles.push(guarded.relativePath);
+
+      if (fileCheckpointIds.length > 0) {
+        const transaction = await createTransactionCheckpoint({
+          ctx,
+          childCheckpointIds: fileCheckpointIds
+        });
+        checkpoints.push(transaction.id);
+        for (const operation of operations) {
+          await ctx.eventBus.publish(
+            createEvent({
+              sessionId: ctx.sessionId,
+              type: "file.changed",
+              data: { path: operation.primaryPath, checkpointId: transaction.id, diff }
+            })
+          );
+        }
+      }
+    }
+
+    for (const operation of operations) {
+      for (const path of operation.changedPaths) {
+        changedFiles.add(path);
+      }
+      if (operation.kind === "create") {
+        createdFiles.add(operation.target.relativePath);
+      } else if (operation.kind === "delete") {
+        deletedFiles.add(operation.source.relativePath);
+      } else if (operation.kind === "rename") {
+        renamedFiles.push({
+          from: operation.source.relativePath,
+          to: operation.target.relativePath
+        });
+      } else {
+        modifiedFiles.add(operation.target.relativePath);
+      }
     }
 
     await ctx.eventBus.publish(
       createEvent({
         sessionId: ctx.sessionId,
         type: "patch.applied",
-        data: { dryRun: input.dryRun ?? false, changedFiles }
+        data: {
+          dryRun: input.dryRun ?? false,
+          changedFiles: [...changedFiles],
+          createdFiles: [...createdFiles],
+          deletedFiles: [...deletedFiles],
+          modifiedFiles: [...modifiedFiles],
+          renamedFiles
+        }
       })
     );
 
     return {
       dryRun: input.dryRun ?? false,
-      changedFiles,
+      changedFiles: [...changedFiles],
+      createdFiles: [...createdFiles],
+      deletedFiles: [...deletedFiles],
+      modifiedFiles: [...modifiedFiles],
+      renamedFiles,
+      rejectedFiles: [],
       checkpoints,
       diff
     };
@@ -856,6 +925,11 @@ export class PatchApplyTool implements NexusTool<
 export interface PatchApplyOutput {
   dryRun: boolean;
   changedFiles: string[];
+  createdFiles: string[];
+  deletedFiles: string[];
+  modifiedFiles: string[];
+  renamedFiles: Array<{ from: string; to: string }>;
+  rejectedFiles: string[];
   checkpoints: string[];
   diff: string;
 }
@@ -1101,10 +1175,11 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     if (!ctx.config.features.mcp) {
       throw new Error("MCP execution is disabled by feature policy.");
     }
-    const server = await findMcpServer(ctx.cwd, input.serverId);
-    if (!server) {
+    const record = await findMcpServerRecord(ctx.cwd, input.serverId);
+    if (!record) {
       throw new Error(`MCP server '${input.serverId}' is not configured.`);
     }
+    const { server, governance } = record;
     if (!server.enabled) {
       throw new Error(`MCP server '${input.serverId}' is disabled.`);
     }
@@ -1115,10 +1190,16 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
       throw new Error(`MCP server '${server.id}' is denied by policy.`);
     }
     if (server.transport !== "stdio") {
-      throw new Error("Only stdio MCP servers are supported for tool execution in this build.");
+      validateMcpHttpServer(server);
     }
     if (server.trust !== "trusted") {
       throw new Error(`MCP server '${server.id}' is not trusted for execution.`);
+    }
+    if (server.governance?.policyVersion !== MCP_GOVERNANCE_POLICY_VERSION) {
+      throw new Error(`MCP server '${server.id}' has not passed current governance review.`);
+    }
+    if ((server.allowedTools ?? []).length === 0) {
+      throw new Error(`MCP server '${server.id}' must explicitly allow tools; wildcard is denied.`);
     }
     if (
       server.allowedTools &&
@@ -1127,8 +1208,16 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     ) {
       throw new Error(`MCP tool '${input.toolName}' is not allowlisted for server '${server.id}'.`);
     }
-    if (!server.command) {
+    if (server.transport === "stdio" && !server.command) {
       throw new Error(`MCP server '${server.id}' is missing a command.`);
+    }
+    if (server.source === "remote") {
+      if (!server.registryUrl || !governance.remoteRegistries.includes(server.registryUrl)) {
+        throw new Error(`Remote MCP server '${server.id}' is not from an approved registry.`);
+      }
+    }
+    if (server.transport === "stdio") {
+      await verifyMcpCommandPin(ctx.cwd, server);
     }
   }
 
@@ -1137,7 +1226,11 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     ctx: ToolExecutionContext
   ): Promise<McpCallOutput> {
     const server = await findMcpServer(ctx.cwd, input.serverId);
-    if (!server || !server.command) {
+    if (
+      !server ||
+      (server.transport === "stdio" && !server.command) ||
+      (server.transport === "http" && !server.url)
+    ) {
       throw new Error(`MCP server '${input.serverId}' is not executable.`);
     }
     await ctx.eventBus.publish(
@@ -1150,13 +1243,21 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
         }
       })
     );
-    const result = await callMcpStdioTool({
-      server,
-      toolName: input.toolName,
-      arguments: input.arguments ?? {},
-      cwd: ctx.cwd,
-      timeoutMs: 30000
-    });
+    const result =
+      server.transport === "http"
+        ? await callMcpHttpTool({
+            server,
+            toolName: input.toolName,
+            arguments: input.arguments ?? {},
+            timeoutMs: 30000
+          })
+        : await callMcpStdioTool({
+            server,
+            toolName: input.toolName,
+            arguments: input.arguments ?? {},
+            cwd: ctx.cwd,
+            timeoutMs: 30000
+          });
     const output = {
       serverId: server.id,
       toolName: input.toolName,
@@ -1269,8 +1370,13 @@ async function createCheckpoint(input: {
     createdAt: nowIso()
   };
   const checkpointPath = join(input.ctx.runDirectory, "checkpoints", `${id}.json`);
-  await mkdir(dirname(checkpointPath), { recursive: true });
-  await writeFile(checkpointPath, `${safeJsonStringify(checkpoint)}\n`, "utf8");
+  await safeAtomicWriteText({
+    path: checkpointPath,
+    allowedRoot: input.ctx.runDirectory,
+    workspaceRoot: input.ctx.cwd,
+    content: `${safeJsonStringify(checkpoint)}\n`,
+    rootDescription: "session run directory"
+  });
   await input.ctx.eventBus.publish(
     createEvent({
       sessionId: input.ctx.sessionId,
@@ -1281,10 +1387,44 @@ async function createCheckpoint(input: {
   return { id };
 }
 
-async function readCheckpoint(
+async function createTransactionCheckpoint(input: {
+  ctx: ToolExecutionContext;
+  childCheckpointIds: string[];
+}): Promise<{ id: string }> {
+  const id = createId("checkpoint") as unknown as string;
+  const checkpoint: TransactionCheckpoint = {
+    id,
+    type: "transaction",
+    sessionId: input.ctx.sessionId,
+    childCheckpointIds: input.childCheckpointIds,
+    createdAt: nowIso()
+  };
+  const checkpointPath = join(input.ctx.runDirectory, "checkpoints", `${id}.json`);
+  await safeAtomicWriteText({
+    path: checkpointPath,
+    allowedRoot: input.ctx.runDirectory,
+    workspaceRoot: input.ctx.cwd,
+    content: `${safeJsonStringify(checkpoint)}\n`,
+    rootDescription: "session run directory"
+  });
+  await input.ctx.eventBus.publish(
+    createEvent({
+      sessionId: input.ctx.sessionId,
+      type: "checkpoint.created",
+      data: {
+        checkpointId: id,
+        checkpointType: "transaction",
+        children: input.childCheckpointIds.length
+      }
+    })
+  );
+  return { id };
+}
+
+async function readCheckpointRecord(
   runDirectory: string,
   checkpointId: string
-): Promise<FileCheckpoint | undefined> {
+): Promise<CheckpointRecord | undefined> {
   const checkpointDirectory = join(runDirectory, "checkpoints");
   if (checkpointId === "latest") {
     const entries = await readdir(checkpointDirectory).catch(() => []);
@@ -1295,20 +1435,52 @@ async function readCheckpoint(
           .map((entry) => readCheckpointFile(join(checkpointDirectory, entry)))
       )
     )
-      .filter((checkpoint): checkpoint is FileCheckpoint => Boolean(checkpoint))
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .filter((checkpoint): checkpoint is CheckpointRecord => Boolean(checkpoint))
+      .sort(compareCheckpointRecords);
     return checkpoints[0];
   }
   return readCheckpointFile(join(checkpointDirectory, `${checkpointId}.json`));
 }
 
-async function readCheckpointFile(filePath: string): Promise<FileCheckpoint | undefined> {
+function compareCheckpointRecords(left: CheckpointRecord, right: CheckpointRecord): number {
+  const byTimestamp = right.createdAt.localeCompare(left.createdAt);
+  if (byTimestamp !== 0) {
+    return byTimestamp;
+  }
+  const byKind = checkpointPriority(right) - checkpointPriority(left);
+  if (byKind !== 0) {
+    return byKind;
+  }
+  return right.id.localeCompare(left.id);
+}
+
+function checkpointPriority(record: CheckpointRecord): number {
+  return isTransactionCheckpoint(record) ? 1 : 0;
+}
+
+async function readCheckpointFile(filePath: string): Promise<CheckpointRecord | undefined> {
   const content = await readFile(filePath, "utf8").catch(() => undefined);
   if (!content) {
     return undefined;
   }
   try {
-    const parsed = JSON.parse(content) as Partial<FileCheckpoint>;
+    const parsed = JSON.parse(content) as Partial<FileCheckpoint & TransactionCheckpoint>;
+    if (
+      parsed.type === "transaction" &&
+      typeof parsed.id === "string" &&
+      typeof parsed.createdAt === "string" &&
+      Array.isArray(parsed.childCheckpointIds) &&
+      parsed.childCheckpointIds.every((id) => typeof id === "string")
+    ) {
+      return {
+        id: parsed.id,
+        type: "transaction",
+        sessionId: parsed.sessionId as SessionId,
+        childCheckpointIds: parsed.childCheckpointIds,
+        createdAt: parsed.createdAt,
+        ...(parsed.toolCallId ? { toolCallId: parsed.toolCallId } : {})
+      };
+    }
     if (
       typeof parsed.id === "string" &&
       typeof parsed.filePath === "string" &&
@@ -1330,6 +1502,101 @@ async function readCheckpointFile(filePath: string): Promise<FileCheckpoint | un
     return undefined;
   }
   return undefined;
+}
+
+function isTransactionCheckpoint(record: CheckpointRecord): record is TransactionCheckpoint {
+  return "type" in record && record.type === "transaction";
+}
+
+async function restoreFileCheckpoint(
+  checkpoint: FileCheckpoint,
+  ctx: ToolExecutionContext
+): Promise<RollbackResult> {
+  const guarded = await guardRollbackCheckpoint(checkpoint, ctx);
+  if (!guarded.allowed) {
+    return {
+      status: "refused",
+      checkpointId: checkpoint.id,
+      restoredFiles: [],
+      refusedReason: guarded.reason ?? "Rollback target was denied by policy."
+    };
+  }
+
+  await restoreGuardedCheckpoint(checkpoint, guarded);
+  return {
+    status: "restored",
+    checkpointId: checkpoint.id,
+    restoredFiles: [guarded.relativePath]
+  };
+}
+
+async function restoreTransactionCheckpoint(
+  checkpoint: TransactionCheckpoint,
+  ctx: ToolExecutionContext
+): Promise<RollbackResult> {
+  const childCheckpoints: FileCheckpoint[] = [];
+  for (const childId of checkpoint.childCheckpointIds) {
+    const child = await readCheckpointRecord(ctx.runDirectory, childId);
+    if (!child || isTransactionCheckpoint(child)) {
+      return {
+        status: "not_found",
+        checkpointId: checkpoint.id,
+        restoredFiles: [],
+        refusedReason: `Transaction child checkpoint '${childId}' was not found.`
+      };
+    }
+    childCheckpoints.push(child);
+  }
+
+  const restorePlan: Array<{ checkpoint: FileCheckpoint; guarded: PathGuardResult }> = [];
+  for (const child of [...childCheckpoints].reverse()) {
+    const guarded = await guardRollbackCheckpoint(child, ctx);
+    if (!guarded.allowed) {
+      return {
+        status: "refused",
+        checkpointId: checkpoint.id,
+        restoredFiles: [],
+        refusedReason: guarded.reason ?? "Rollback target was denied by policy."
+      };
+    }
+    restorePlan.push({ checkpoint: child, guarded });
+  }
+
+  const restoredFiles: string[] = [];
+  for (const item of restorePlan) {
+    await restoreGuardedCheckpoint(item.checkpoint, item.guarded);
+    restoredFiles.push(item.guarded.relativePath);
+  }
+
+  return {
+    status: "restored",
+    checkpointId: checkpoint.id,
+    restoredFiles
+  };
+}
+
+async function guardRollbackCheckpoint(
+  checkpoint: FileCheckpoint,
+  ctx: ToolExecutionContext
+): Promise<PathGuardResult> {
+  return ctx.security.guardPath({
+    cwd: ctx.cwd,
+    path: checkpoint.filePath,
+    config: ctx.config,
+    operation: "write"
+  });
+}
+
+async function restoreGuardedCheckpoint(
+  checkpoint: FileCheckpoint,
+  guarded: PathGuardResult
+): Promise<void> {
+  if (checkpoint.beforeContent === null) {
+    await unlink(guarded.absolutePath).catch(() => undefined);
+    return;
+  }
+  await mkdir(dirname(guarded.absolutePath), { recursive: true });
+  await writeFile(guarded.absolutePath, checkpoint.beforeContent, "utf8");
 }
 
 async function publishRollbackRefused(
@@ -1356,39 +1623,10 @@ function createUnifiedDiff(path: string, before: string, after: string): string 
 }
 
 function parseUnifiedPatch(patch: string): ParsedFilePatch[] {
-  const lines = patch.split(/\r?\n/);
-  const patches: ParsedFilePatch[] = [];
-  let current: ParsedFilePatch | undefined;
-
-  for (const line of lines) {
-    if (line.startsWith("+++ ")) {
-      const path = line.slice(4).replace(/^b\//, "");
-      if (path !== "/dev/null") {
-        current = { path, hunks: [] };
-        patches.push(current);
-      }
-      continue;
-    }
-    if (line.startsWith("@@ ")) {
-      if (!current) {
-        throw new Error("Patch hunk appeared before target file.");
-      }
-      const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      if (!match?.[1]) {
-        throw new Error(`Unsupported hunk header '${line}'.`);
-      }
-      current.hunks.push({ oldStart: Number(match[1]), lines: [] });
-      continue;
-    }
-    const hunk = current?.hunks.at(-1);
-    if (
-      hunk &&
-      (line.startsWith(" ") || line.startsWith("+") || line.startsWith("-") || line === "\\")
-    ) {
-      hunk.lines.push(line);
-    }
-  }
-
+  const sections = splitPatchSections(patch);
+  const patches = sections
+    .map(parsePatchSection)
+    .filter((item): item is ParsedFilePatch => item !== undefined);
   if (patches.length === 0) {
     throw new Error("Patch contains no target files.");
   }
@@ -1396,7 +1634,12 @@ function parseUnifiedPatch(patch: string): ParsedFilePatch[] {
 }
 
 function applyFilePatch(beforeContent: string, patch: ParsedFilePatch): string {
-  const original = beforeContent.length > 0 ? beforeContent.split(/\r?\n/) : [];
+  if (patch.hunks.length === 0) {
+    return beforeContent;
+  }
+  const hadTrailingNewline = beforeContent.endsWith("\n");
+  const original =
+    beforeContent.length > 0 ? beforeContent.replace(/\r?\n$/, "").split(/\r?\n/) : [];
   const output: string[] = [];
   let originalIndex = 0;
 
@@ -1426,7 +1669,8 @@ function applyFilePatch(beforeContent: string, patch: ParsedFilePatch): string {
     originalIndex += 1;
   }
 
-  return output.join("\n");
+  const next = output.join("\n");
+  return next.length > 0 || hadTrailingNewline ? `${next}\n` : next;
 }
 
 function assertPatchLine(
@@ -1442,7 +1686,333 @@ function assertPatchLine(
 
 interface ParsedFilePatch {
   path: string;
-  hunks: Array<{ oldStart: number; lines: string[] }>;
+  oldPath?: string;
+  newPath?: string;
+  renameFrom?: string;
+  renameTo?: string;
+  operation: "modify" | "create" | "delete" | "rename";
+  hunks: Array<{
+    oldStart: number;
+    oldCount: number;
+    newStart: number;
+    newCount: number;
+    lines: string[];
+  }>;
+}
+
+interface GuardedPatchPath {
+  relativePath: string;
+  absolutePath: string;
+}
+
+type PatchOperation =
+  | {
+      kind: "modify" | "create";
+      patch: ParsedFilePatch;
+      target: GuardedPatchPath;
+      beforeContent: string | undefined;
+      afterContent: string;
+      primaryPath: string;
+      changedPaths: string[];
+    }
+  | {
+      kind: "delete";
+      patch: ParsedFilePatch;
+      source: GuardedPatchPath;
+      beforeContent: string;
+      primaryPath: string;
+      changedPaths: string[];
+    }
+  | {
+      kind: "rename";
+      patch: ParsedFilePatch;
+      source: GuardedPatchPath;
+      target: GuardedPatchPath;
+      beforeContent: string;
+      targetBeforeContent: string | undefined;
+      afterContent: string;
+      primaryPath: string;
+      changedPaths: string[];
+    };
+
+function splitPatchSections(patch: string): string[][] {
+  const lines = patch.split(/\r?\n/);
+  const sections: string[][] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("diff --git ") && current.length > 0) {
+      sections.push(current);
+      current = [line];
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.some((line) => line.trim().length > 0)) {
+    sections.push(current);
+  }
+  return sections;
+}
+
+function parsePatchSection(lines: string[]): ParsedFilePatch | undefined {
+  if (
+    lines.some((line) => line.startsWith("GIT binary patch") || line.startsWith("Binary files "))
+  ) {
+    throw new Error("Binary patches are not supported by patch.apply.");
+  }
+
+  const diffHeader = lines.find((line) => line.startsWith("diff --git "));
+  const diffMatch = diffHeader ? /^diff --git a\/(.+) b\/(.+)$/.exec(diffHeader) : undefined;
+  const renameFrom = readPatchHeader(lines, "rename from");
+  const renameTo = readPatchHeader(lines, "rename to");
+  const oldPath = normalizePatchPath(readPatchHeader(lines, "---") ?? diffMatch?.[1]);
+  const newPath = normalizePatchPath(readPatchHeader(lines, "+++") ?? diffMatch?.[2]);
+
+  const operation = classifyPatchOperation({
+    ...(oldPath ? { oldPath } : {}),
+    ...(newPath ? { newPath } : {}),
+    ...(renameFrom ? { renameFrom } : {}),
+    ...(renameTo ? { renameTo } : {})
+  });
+  const path =
+    operation === "delete"
+      ? oldPath
+      : operation === "rename"
+        ? (normalizePatchPath(renameTo) ?? newPath)
+        : newPath;
+  if (!path) {
+    return undefined;
+  }
+
+  const parsed: ParsedFilePatch = {
+    path,
+    ...(oldPath ? { oldPath } : {}),
+    ...(newPath ? { newPath } : {}),
+    ...(renameFrom ? { renameFrom } : {}),
+    ...(renameTo ? { renameTo } : {}),
+    operation,
+    hunks: []
+  };
+
+  let currentHunk: ParsedFilePatch["hunks"][number] | undefined;
+  for (const line of lines) {
+    if (line.startsWith("@@ ")) {
+      const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (!match?.[1] || !match[3]) {
+        throw new Error(`Unsupported hunk header '${line}'.`);
+      }
+      currentHunk = {
+        oldStart: Number(match[1]),
+        oldCount: Number(match[2] ?? "1"),
+        newStart: Number(match[3]),
+        newCount: Number(match[4] ?? "1"),
+        lines: []
+      };
+      parsed.hunks.push(currentHunk);
+      continue;
+    }
+    if (
+      currentHunk &&
+      (line.startsWith(" ") ||
+        line.startsWith("+") ||
+        line.startsWith("-") ||
+        line === "\\ No newline at end of file")
+    ) {
+      currentHunk.lines.push(line);
+    }
+  }
+
+  if (parsed.hunks.length === 0 && operation !== "rename") {
+    throw new Error(`Patch for ${path} contains no hunks.`);
+  }
+  validatePatchHunks(parsed);
+  return parsed;
+}
+
+function readPatchHeader(
+  lines: string[],
+  header: "---" | "+++" | "rename from" | "rename to"
+): string | undefined {
+  const prefix = `${header} `;
+  return lines
+    .find((line) => line.startsWith(prefix))
+    ?.slice(prefix.length)
+    .trim();
+}
+
+function normalizePatchPath(path: string | undefined): string | undefined {
+  if (!path || path === "/dev/null") {
+    return undefined;
+  }
+  return path.replace(/^[ab]\//, "");
+}
+
+function classifyPatchOperation(input: {
+  oldPath?: string;
+  newPath?: string;
+  renameFrom?: string;
+  renameTo?: string;
+}): ParsedFilePatch["operation"] {
+  if (input.renameFrom && input.renameTo) {
+    return "rename";
+  }
+  if (!input.oldPath && input.newPath) {
+    return "create";
+  }
+  if (input.oldPath && !input.newPath) {
+    return "delete";
+  }
+  return "modify";
+}
+
+function validatePatchHunks(patch: ParsedFilePatch): void {
+  for (const hunk of patch.hunks) {
+    const oldLineCount = hunk.lines.filter(
+      (line) => line.startsWith(" ") || line.startsWith("-")
+    ).length;
+    const newLineCount = hunk.lines.filter(
+      (line) => line.startsWith(" ") || line.startsWith("+")
+    ).length;
+    if (oldLineCount !== hunk.oldCount || newLineCount !== hunk.newCount) {
+      throw new Error(`Patch hunk line counts do not match header in ${patch.path}.`);
+    }
+  }
+}
+
+async function preparePatchOperation(
+  patch: ParsedFilePatch,
+  ctx: ToolExecutionContext
+): Promise<PatchOperation> {
+  if (patch.operation === "rename") {
+    const source = await guardPatchPath(patch.renameFrom ?? patch.oldPath ?? patch.path, ctx);
+    const target = await guardPatchPath(patch.renameTo ?? patch.newPath ?? patch.path, ctx);
+    const beforeContent = await readRequiredTextFile(source.absolutePath, source.relativePath);
+    const targetBeforeContent = await readFile(target.absolutePath, "utf8").catch(() => undefined);
+    if (targetBeforeContent !== undefined) {
+      throw new Error(`Patch target '${target.relativePath}' already exists.`);
+    }
+    const afterContent =
+      patch.hunks.length > 0 ? applyFilePatch(beforeContent, patch) : beforeContent;
+    return {
+      kind: "rename",
+      patch,
+      source,
+      target,
+      beforeContent,
+      targetBeforeContent,
+      afterContent,
+      primaryPath: target.relativePath,
+      changedPaths: [source.relativePath, target.relativePath]
+    };
+  }
+
+  if (patch.operation === "delete") {
+    const source = await guardPatchPath(patch.oldPath ?? patch.path, ctx);
+    const beforeContent = await readRequiredTextFile(source.absolutePath, source.relativePath);
+    const afterContent = applyFilePatch(beforeContent, patch);
+    if (afterContent.trim().length > 0) {
+      throw new Error(`Delete patch for '${source.relativePath}' leaves content behind.`);
+    }
+    return {
+      kind: "delete",
+      patch,
+      source,
+      beforeContent,
+      primaryPath: source.relativePath,
+      changedPaths: [source.relativePath]
+    };
+  }
+
+  const target = await guardPatchPath(patch.newPath ?? patch.path, ctx);
+  const beforeContent = await readFile(target.absolutePath, "utf8").catch(() => undefined);
+  if (patch.operation === "create" && beforeContent !== undefined) {
+    throw new Error(`Create patch target '${target.relativePath}' already exists.`);
+  }
+  if (patch.operation === "modify" && beforeContent === undefined) {
+    throw new Error(`Patch target '${target.relativePath}' does not exist.`);
+  }
+  const afterContent = applyFilePatch(beforeContent ?? "", patch);
+  return {
+    kind: patch.operation,
+    patch,
+    target,
+    beforeContent,
+    afterContent,
+    primaryPath: target.relativePath,
+    changedPaths: [target.relativePath]
+  };
+}
+
+async function applyPatchOperation(
+  operation: PatchOperation,
+  ctx: ToolExecutionContext,
+  onCheckpointCreated?: (checkpointId: string) => void
+): Promise<string[]> {
+  if (operation.kind === "delete") {
+    const checkpoint = await createCheckpoint({
+      ctx,
+      filePath: operation.source.relativePath,
+      absolutePath: operation.source.absolutePath,
+      beforeContent: operation.beforeContent
+    });
+    onCheckpointCreated?.(checkpoint.id);
+    await unlink(operation.source.absolutePath);
+    return [checkpoint.id];
+  }
+
+  if (operation.kind === "rename") {
+    const sourceCheckpoint = await createCheckpoint({
+      ctx,
+      filePath: operation.source.relativePath,
+      absolutePath: operation.source.absolutePath,
+      beforeContent: operation.beforeContent
+    });
+    onCheckpointCreated?.(sourceCheckpoint.id);
+    const targetCheckpoint = await createCheckpoint({
+      ctx,
+      filePath: operation.target.relativePath,
+      absolutePath: operation.target.absolutePath,
+      beforeContent: operation.targetBeforeContent
+    });
+    onCheckpointCreated?.(targetCheckpoint.id);
+    await mkdir(dirname(operation.target.absolutePath), { recursive: true });
+    await rename(operation.source.absolutePath, operation.target.absolutePath);
+    await writeFile(operation.target.absolutePath, operation.afterContent, "utf8");
+    return [sourceCheckpoint.id, targetCheckpoint.id];
+  }
+
+  const checkpoint = await createCheckpoint({
+    ctx,
+    filePath: operation.target.relativePath,
+    absolutePath: operation.target.absolutePath,
+    beforeContent: operation.beforeContent
+  });
+  onCheckpointCreated?.(checkpoint.id);
+  await mkdir(dirname(operation.target.absolutePath), { recursive: true });
+  await writeFile(operation.target.absolutePath, operation.afterContent, "utf8");
+  return [checkpoint.id];
+}
+
+async function guardPatchPath(path: string, ctx: ToolExecutionContext): Promise<GuardedPatchPath> {
+  const guarded = await ctx.security.guardPath({
+    cwd: ctx.cwd,
+    path,
+    config: ctx.config,
+    operation: "write",
+    allowProtected: ctx.approvalGranted === true
+  });
+  if (!guarded.allowed) {
+    throw new Error(guarded.reason ?? "Path denied by policy.");
+  }
+  return {
+    relativePath: guarded.relativePath,
+    absolutePath: guarded.absolutePath
+  };
+}
+
+async function readRequiredTextFile(absolutePath: string, relativePath: string): Promise<string> {
+  return readFile(absolutePath, "utf8").catch(() => {
+    throw new Error(`Patch target '${relativePath}' does not exist.`);
+  });
 }
 
 async function runFixedCommand(
@@ -1484,6 +2054,13 @@ async function runShellCommand(
   ctx: ToolExecutionContext,
   options: { timeoutMs: number; maxOutputBytes: number; emitEvents: boolean }
 ): Promise<ShellRunOutput> {
+  if (!ctx.sandboxContext?.hardEnforced) {
+    throw new NexusError({
+      category: "sandbox",
+      message: "Shell execution requires a hard sandbox; refusing to run on the host.",
+      recoverable: true
+    });
+  }
   if (options.emitEvents) {
     await ctx.eventBus.publish(
       createEvent({
@@ -1677,18 +2254,55 @@ interface StoredMcpServer {
   allowedTools?: string[];
   envAllowlist?: string[];
   pinnedCommandSha256?: string;
+  source?: "local" | "remote";
+  registryUrl?: string;
+  governance?: {
+    policyVersion: string;
+    reviewedAt: string;
+  };
 }
 
+interface StoredMcpGovernance {
+  policyVersion: string;
+  remoteRegistries: string[];
+}
+
+interface StoredMcpRecord {
+  server: StoredMcpServer;
+  governance: StoredMcpGovernance;
+}
+
+const MCP_GOVERNANCE_POLICY_VERSION = "nexus-mcp-v1";
+
 async function findMcpServer(cwd: string, serverId: string): Promise<StoredMcpServer | undefined> {
+  return (await findMcpServerRecord(cwd, serverId))?.server;
+}
+
+async function findMcpServerRecord(
+  cwd: string,
+  serverId: string
+): Promise<StoredMcpRecord | undefined> {
   await assertSafeNexusRoot(cwd);
-  const content = await readFile(join(cwd, ".nexus", "mcp.json"), "utf8").catch(() => undefined);
+  const content = await safeReadTextFile({
+    path: join(cwd, ".nexus", "mcp.json"),
+    allowedRoot: join(cwd, ".nexus"),
+    workspaceRoot: cwd,
+    rootDescription: ".nexus MCP registry"
+  });
   if (!content) {
     return undefined;
   }
   try {
-    const parsed = JSON.parse(content) as { servers?: unknown };
+    const parsed = JSON.parse(content) as { governance?: unknown; servers?: unknown };
     const servers = Array.isArray(parsed.servers) ? parsed.servers.filter(isStoredMcpServer) : [];
-    return servers.find((server) => server.id === serverId);
+    const server = servers.find((item) => item.id === serverId);
+    if (!server) {
+      return undefined;
+    }
+    return {
+      server,
+      governance: normalizeStoredMcpGovernance(parsed.governance)
+    };
   } catch {
     return undefined;
   }
@@ -1732,10 +2346,134 @@ function isStoredMcpServer(value: unknown): value is StoredMcpServer {
     (item.envAllowlist === undefined ||
       item.envAllowlist.every((key) => typeof key === "string")) &&
     (item.pinnedCommandSha256 === undefined || typeof item.pinnedCommandSha256 === "string") &&
+    (item.source === undefined || item.source === "local" || item.source === "remote") &&
+    (item.registryUrl === undefined || typeof item.registryUrl === "string") &&
+    (item.governance === undefined ||
+      (typeof item.governance === "object" &&
+        item.governance !== null &&
+        typeof (item.governance as { policyVersion?: unknown }).policyVersion === "string" &&
+        typeof (item.governance as { reviewedAt?: unknown }).reviewedAt === "string")) &&
     (item.command === undefined || typeof item.command === "string") &&
     (item.args === undefined || item.args.every((arg) => typeof arg === "string")) &&
     (item.url === undefined || typeof item.url === "string")
   );
+}
+
+function normalizeStoredMcpGovernance(value: unknown): StoredMcpGovernance {
+  if (typeof value !== "object" || value === null) {
+    return { policyVersion: MCP_GOVERNANCE_POLICY_VERSION, remoteRegistries: [] };
+  }
+  const item = value as { policyVersion?: unknown; remoteRegistries?: unknown };
+  return {
+    policyVersion:
+      item.policyVersion === MCP_GOVERNANCE_POLICY_VERSION
+        ? MCP_GOVERNANCE_POLICY_VERSION
+        : MCP_GOVERNANCE_POLICY_VERSION,
+    remoteRegistries: Array.isArray(item.remoteRegistries)
+      ? item.remoteRegistries.filter((url): url is string => typeof url === "string")
+      : []
+  };
+}
+
+async function verifyMcpCommandPin(cwd: string, server: StoredMcpServer): Promise<void> {
+  if (!server.pinnedCommandSha256) {
+    throw new Error(`MCP stdio server '${server.id}' is missing pinnedCommandSha256.`);
+  }
+  const actual = await fingerprintMcpCommand(cwd, server);
+  if (!actual) {
+    throw new Error(`MCP stdio server '${server.id}' command artifact cannot be fingerprinted.`);
+  }
+  if (actual !== server.pinnedCommandSha256) {
+    throw new Error(`MCP stdio server '${server.id}' command fingerprint does not match.`);
+  }
+}
+
+async function fingerprintMcpCommand(
+  cwd: string,
+  server: StoredMcpServer
+): Promise<string | undefined> {
+  const candidates = [
+    server.command,
+    ...(isNodeLikeCommand(server.command) && server.args?.[0] ? [server.args[0]] : [])
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const absolutePath = isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
+    const content = await readFile(absolutePath).catch(() => undefined);
+    if (content) {
+      return createHash("sha256").update(content).digest("hex");
+    }
+  }
+  return undefined;
+}
+
+function isNodeLikeCommand(command: string | undefined): boolean {
+  return Boolean(command && /(?:^|[/\\])(?:node|node\.exe|bun|bun\.exe)$/.test(command));
+}
+
+function validateMcpHttpServer(server: StoredMcpServer): void {
+  if (server.transport !== "http") {
+    return;
+  }
+  if (!server.url) {
+    throw new Error(`MCP HTTP server '${server.id}' is missing a url.`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(server.url);
+  } catch {
+    throw new Error(`MCP HTTP server '${server.id}' has an invalid url.`);
+  }
+  if (
+    parsed.protocol !== "https:" &&
+    parsed.hostname !== "localhost" &&
+    parsed.hostname !== "127.0.0.1"
+  ) {
+    throw new Error(`MCP HTTP server '${server.id}' must use https unless it targets localhost.`);
+  }
+}
+
+async function callMcpHttpTool(input: {
+  server: StoredMcpServer;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  timeoutMs: number;
+}): Promise<unknown> {
+  if (!input.server.url) {
+    throw new Error(`MCP server '${input.server.id}' is missing a url.`);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs);
+  try {
+    const response = await fetch(input.server.url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: input.toolName,
+          arguments: input.arguments
+        }
+      }),
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`MCP HTTP server '${input.server.id}' returned ${response.status}.`);
+    }
+    const payload = (await response.json()) as { result?: unknown; error?: { message?: string } };
+    if (payload.error) {
+      throw new Error(
+        payload.error.message ?? `MCP HTTP server '${input.server.id}' returned an error.`
+      );
+    }
+    return payload.result ?? payload;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function callMcpStdioTool(input: {

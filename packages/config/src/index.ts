@@ -32,6 +32,17 @@ export interface SdlcConfig {
   requireReviewForSecuritySensitiveChanges: boolean;
 }
 
+export type AgentCriticMode = "off" | "after_mutation" | "always";
+
+export interface AgentConfig {
+  maxModelTurns: number;
+  maxToolCalls: number;
+  maxRepeatedToolCalls: number;
+  maxSubagents: number;
+  criticMode: AgentCriticMode;
+  maxObservationChars: number;
+}
+
 export interface SecurityConfig {
   networkDefault: "off" | "on" | "restricted";
   protectedPaths: string[];
@@ -96,6 +107,7 @@ export interface ResolvedConfig {
   features: FeatureFlags;
   learning: LearningConfig;
   sdlc: SdlcConfig;
+  agent: AgentConfig;
   security: SecurityConfig;
   sandbox: SandboxConfig;
   policy: PolicyConfig;
@@ -134,9 +146,26 @@ const learningModeSchema = z.enum(["off", "observe", "suggest", "active"]);
 
 const rawConfigSchema = z.object({}).passthrough();
 const builtInProfiles: Record<string, PartialConfig> = {
+  safe: {
+    sandbox_mode: "read-only",
+    approval_policy: "on-request",
+    security: { network_default: "off" }
+  },
+  workspace: {
+    sandbox_mode: "workspace-write",
+    approval_policy: "on-request",
+    security: { network_default: "off" }
+  },
+  automation: {
+    sandbox_mode: "workspace-write",
+    approval_policy: "never",
+    security: { network_default: "off" }
+  },
   fake: {
     model: "fake-default",
-    model_provider: "fake"
+    model_provider: "fake",
+    sandbox_mode: "workspace-write",
+    approval_policy: "never"
   },
   deepseek: {
     model: "deepseek-v4-flash",
@@ -148,7 +177,7 @@ export const defaultConfig: Omit<ResolvedConfig, "sources" | "selectedProfile"> 
   model: "deepseek-v4-flash",
   modelProvider: "deepseek",
   approvalPolicy: "on-request",
-  sandboxMode: "workspace-write",
+  sandboxMode: "read-only",
   features: {
     agenticSdlc: true,
     learningPlane: true,
@@ -167,6 +196,14 @@ export const defaultConfig: Omit<ResolvedConfig, "sources" | "selectedProfile"> 
     requirePlanForLargeChanges: true,
     requireVerification: true,
     requireReviewForSecuritySensitiveChanges: true
+  },
+  agent: {
+    maxModelTurns: 12,
+    maxToolCalls: 40,
+    maxRepeatedToolCalls: 2,
+    maxSubagents: 3,
+    criticMode: "after_mutation",
+    maxObservationChars: 12000
   },
   security: {
     networkDefault: "off",
@@ -309,7 +346,7 @@ async function loadConfigFile(filePath: string, sources: ConfigSource[]): Promis
   }
 
   try {
-    const parsed = parse(await readFile(filePath, "utf8"));
+    const parsed = parse(stripBom(await readFile(filePath, "utf8")));
     const value = rawConfigSchema.parse(parsed);
     sources.push({ path: filePath, loaded: true });
     return value;
@@ -320,6 +357,10 @@ async function loadConfigFile(filePath: string, sources: ConfigSource[]): Promis
       recoverable: true
     });
   }
+}
+
+function stripBom(content: string): string {
+  return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
 }
 
 function applyOverrides(
@@ -352,6 +393,7 @@ function normalizeAndValidate(
   const learning = readRecord(config, "learning") ?? {};
   const features = readRecord(config, "features") ?? {};
   const sdlc = readRecord(config, "sdlc") ?? {};
+  const agent = readRecord(config, "agent") ?? {};
   const security = readRecord(config, "security") ?? {};
   const sandbox = readRecord(config, "sandbox") ?? {};
   const policy = readRecord(config, "policy") ?? {};
@@ -396,6 +438,21 @@ function normalizeAndValidate(
       requireReviewForSecuritySensitiveChanges:
         readBoolean(sdlc, "require_review_for_security_sensitive_changes") ??
         defaultConfig.sdlc.requireReviewForSecuritySensitiveChanges
+    },
+    agent: {
+      maxModelTurns:
+        readPositiveInteger(agent, "max_model_turns") ?? defaultConfig.agent.maxModelTurns,
+      maxToolCalls:
+        readPositiveInteger(agent, "max_tool_calls") ?? defaultConfig.agent.maxToolCalls,
+      maxRepeatedToolCalls:
+        readPositiveInteger(agent, "max_repeated_tool_calls") ??
+        defaultConfig.agent.maxRepeatedToolCalls,
+      maxSubagents: readPositiveInteger(agent, "max_subagents") ?? defaultConfig.agent.maxSubagents,
+      criticMode:
+        parseAgentCriticMode(readString(agent, "critic_mode")) ?? defaultConfig.agent.criticMode,
+      maxObservationChars:
+        readPositiveInteger(agent, "max_observation_chars") ??
+        defaultConfig.agent.maxObservationChars
     },
     security: {
       networkDefault:
@@ -491,6 +548,14 @@ function normalizeResolved(
       require_review_for_security_sensitive_changes:
         config.sdlc.requireReviewForSecuritySensitiveChanges
     },
+    agent: {
+      max_model_turns: config.agent.maxModelTurns,
+      max_tool_calls: config.agent.maxToolCalls,
+      max_repeated_tool_calls: config.agent.maxRepeatedToolCalls,
+      max_subagents: config.agent.maxSubagents,
+      critic_mode: config.agent.criticMode,
+      max_observation_chars: config.agent.maxObservationChars
+    },
     security: {
       network_default: config.security.networkDefault,
       protected_paths: config.security.protectedPaths,
@@ -579,6 +644,18 @@ function readStringArray(source: PartialConfig, key: string): string[] | undefin
 function readNumber(source: PartialConfig, key: string): number | undefined {
   const value = source[key];
   return typeof value === "number" ? value : undefined;
+}
+
+function readPositiveInteger(source: PartialConfig, key: string): number | undefined {
+  const value = readNumber(source, key);
+  return value !== undefined && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function parseAgentCriticMode(value: string | undefined): AgentCriticMode | undefined {
+  if (value === "off" || value === "after_mutation" || value === "always") {
+    return value;
+  }
+  return undefined;
 }
 
 function parseSandboxPreferredAdapter(

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import * as readline from "node:readline/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { MinimalAgentOrchestrator, SubagentManager } from "@nexus/agent";
 import { type ConfigOverrides, type ResolvedConfig, resolveConfig } from "@nexus/config";
 import { type CompiledContext } from "@nexus/context";
 import { InMemoryEventBus, createEvent, readJsonlEvents } from "@nexus/events";
-import { LearningPlane } from "@nexus/learning";
+import { LearningPlane, type LearningCandidateDraft } from "@nexus/learning";
 import { McpRegistry } from "@nexus/mcp";
 import { DefaultModelRouter, ModelProviderRegistry } from "@nexus/model-router";
 import { DeepSeekChatProvider } from "@nexus/provider-deepseek";
@@ -16,6 +17,7 @@ import { OpenAiResponsesProvider } from "@nexus/provider-openai";
 import {
   type NexusSession,
   NexusRuntime,
+  type RuntimeContext,
   type RuntimeServices,
   type TurnResult,
   createDefaultRuntimeServices
@@ -30,9 +32,11 @@ import {
   type LearningCandidateId,
   type MemoryId,
   NexusError,
+  type SessionId,
   nowIso,
   safeJsonStringify
 } from "@nexus/shared";
+import { listSessionManifests } from "@nexus/storage";
 import { FakeModelProvider } from "@nexus/test-utils";
 import { RollbackManager, createDefaultToolBus, createToolRequest } from "@nexus/tool-bus";
 import {
@@ -78,8 +82,23 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     return;
   }
 
-  if (parsed.command === "stub") {
-    await runRecognizedTopLevelCommand(parsed);
+  if (parsed.command === "fork") {
+    await runForkCommand(parsed);
+    return;
+  }
+
+  if (parsed.command === "login") {
+    await runLoginCommand(parsed);
+    return;
+  }
+
+  if (parsed.command === "logout") {
+    await runLogoutCommand(parsed);
+    return;
+  }
+
+  if (parsed.command === "utility") {
+    await runUtilityTopLevelCommand(parsed);
     return;
   }
 
@@ -141,7 +160,10 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
     });
     const { runtime, eventBus, services } = createRuntime(config, false, cwd);
     const sdlcManager = services.sdlc;
-    const learningPlane = new LearningPlane({ mode: config.learning.mode });
+    const learningPlane = new LearningPlane({
+      mode: config.learning.mode,
+      requireUserConfirmation: config.learning.requireUserConfirmation
+    });
     const sessionFilesChanged = new Set<string>();
     const sessionCommandsRun = new Set<string>();
 
@@ -321,6 +343,18 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
           }
           return true;
         }
+        if (intent.type === "auth.logout") {
+          output.write(
+            `${(
+              await logoutAuthProviders({
+                cwd: session.cwd,
+                config,
+                providers: providersFromLogoutArgument(intent.argument, config)
+              })
+            ).join("\n")}\n`
+          );
+          return true;
+        }
         if (intent.type === "config.debug") {
           const loaded = config.sources.map(
             (source) => `${source.loaded ? "loaded" : "missing"} ${source.path}`
@@ -459,7 +493,17 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
           return true;
         }
         if (intent.type === "agent.open") {
-          output.write(`${await renderAgentStatus(intent.argument)}\n`);
+          output.write(
+            `${await renderAgentStatus({
+              argument: intent.argument,
+              session,
+              config,
+              runtime,
+              services,
+              eventBus,
+              nonInteractive: false
+            })}\n`
+          );
           return true;
         }
         if (intent.type === "context.compact") {
@@ -542,6 +586,27 @@ async function runMcpCommand(parsed: ParsedArgs): Promise<void> {
   const cwd = parsed.cwd ?? process.cwd();
   const registry = new McpRegistry();
   const [action = "list", id, ...rest] = (parsed.prompt ?? "list").split(/\s+/).filter(Boolean);
+  if (action === "registry-add") {
+    if (!id) {
+      process.stderr.write("Usage: nexus mcp registry-add <url>\n");
+      process.exitCode = 7;
+      return;
+    }
+    const governance = await registry.addRemoteRegistry(cwd, id);
+    process.stdout.write(
+      `MCP remote registries: ${governance.remoteRegistries.join(", ") || "none"}\n`
+    );
+    return;
+  }
+  if (action === "registries") {
+    const governance = await registry.governance(cwd);
+    process.stdout.write(
+      governance.remoteRegistries.length === 0
+        ? "No MCP remote registries configured.\n"
+        : `${governance.remoteRegistries.join("\n")}\n`
+    );
+    return;
+  }
   if (action === "add") {
     if (!id || rest.length === 0) {
       process.stderr.write("Usage: nexus mcp add <id> <command...>\n");
@@ -634,7 +699,9 @@ async function runMcpCommand(parsed: ParsedArgs): Promise<void> {
             (server) =>
               `${server.id} ${server.enabled ? "enabled" : "disabled"} ${server.transport} ${
                 server.trust ?? "untrusted"
-              } tools=${(server.allowedTools ?? []).join(",") || "*"}`
+              } tools=${(server.allowedTools ?? []).join(",") || "none"} governance=${
+                server.governance?.policyVersion ?? "pending"
+              }`
           )
           .join("\n")}\n`
   );
@@ -660,26 +727,137 @@ async function runHooksCommand(parsed: ParsedArgs): Promise<void> {
   );
 }
 
-async function runRecognizedTopLevelCommand(parsed: ParsedArgs): Promise<void> {
+async function runForkCommand(parsed: ParsedArgs): Promise<void> {
+  try {
+    const cwd = parsed.cwd ?? process.cwd();
+    const config = await resolveConfig({
+      cwd,
+      ...(parsed.configPath ? { configPath: parsed.configPath } : {}),
+      overrides: parsed.overrides
+    });
+    const { runtime, eventBus, services } = createRuntime(config, parsed.json, cwd);
+    const forkInput = parseForkInput(parsed.prompt);
+    const parentSessionId = forkInput.sessionId ?? (await latestSessionId(cwd));
+    if (!parentSessionId) {
+      throw new NexusError({
+        category: "storage",
+        message: "No previous session was found to fork. Start or run a session first.",
+        recoverable: true
+      });
+    }
+
+    const session = await runtime.forkSession(parentSessionId, {
+      cwd,
+      mode: forkInput.prompt ? "non-interactive" : "interactive"
+    });
+    if (!forkInput.prompt) {
+      process.stdout.write(
+        `Forked session ${session.id} from ${parentSessionId}. Resume with: nexus resume --cd ${cwd}\n`
+      );
+      return;
+    }
+
+    const result = await runtime.runTurn({ text: forkInput.prompt, createdAt: nowIso() });
+    await runPostMutationGates({
+      session,
+      config,
+      runtime,
+      services,
+      eventBus,
+      result,
+      rollbackOnVerifyFail: parsed.rollbackOnVerifyFail ?? false,
+      nonInteractive: true,
+      ...(parsed.verify ? { verify: parsed.verify } : {})
+    });
+    await runtime.complete(result);
+    await persistRequestedArtifacts({ parsed, runtime, config, services, cwd });
+    if (!parsed.json && result.finalMessage) {
+      process.stdout.write(`${result.finalMessage}\n`);
+    }
+    process.exitCode = result.exitCodeHint ?? 0;
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = exitCodeForError(error);
+  }
+}
+
+async function runLoginCommand(parsed: ParsedArgs): Promise<void> {
+  try {
+    const cwd = parsed.cwd ?? process.cwd();
+    const config = await resolveConfig({
+      cwd,
+      ...(parsed.configPath ? { configPath: parsed.configPath } : {}),
+      overrides: parsed.overrides
+    });
+    const provider = parseAuthProvider(parsed, config);
+    const apiKeyEnv = config.providers[provider]?.apiKeyEnv ?? defaultProviderApiKeyEnv(provider);
+    const apiKey = parsed.authApiKey ?? process.env[apiKeyEnv];
+    if (!apiKey) {
+      throw new NexusError({
+        category: "auth",
+        message: `Missing API key for ${provider}. Use --api-key or set ${apiKeyEnv}.`,
+        recoverable: true
+      });
+    }
+
+    const authFilePath = resolveAuthFilePath({
+      cwd,
+      provider,
+      config,
+      ...(parsed.authFile ? { overridePath: parsed.authFile } : {})
+    });
+    const record = await readAuthFile(authFilePath);
+    const providers = readProvidersRecord(record);
+    providers[provider] = {
+      apiKey,
+      ...(provider === "openai" && parsed.authOrganization
+        ? { organization: parsed.authOrganization }
+        : {}),
+      ...(provider === "openai" && parsed.authProject ? { project: parsed.authProject } : {})
+    };
+    delete record[provider];
+    record.providers = providers;
+    await writeAuthFile(authFilePath, record);
+    process.stdout.write(`Stored ${provider} auth in ${authFilePath}.\n`);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = exitCodeForError(error);
+  }
+}
+
+async function runLogoutCommand(parsed: ParsedArgs): Promise<void> {
+  try {
+    const cwd = parsed.cwd ?? process.cwd();
+    const config = await resolveConfig({
+      cwd,
+      ...(parsed.configPath ? { configPath: parsed.configPath } : {}),
+      overrides: parsed.overrides
+    });
+    const providers =
+      parsed.authAll || parsed.prompt?.trim().split(/\s+/).find(Boolean) === "all"
+        ? supportedAuthProviders()
+        : [parseAuthProvider(parsed, config)];
+    process.stdout.write(
+      `${(
+        await logoutAuthProviders({
+          cwd,
+          config,
+          providers,
+          ...(parsed.authFile ? { overridePath: parsed.authFile } : {})
+        })
+      ).join("\n")}\n`
+    );
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = exitCodeForError(error);
+  }
+}
+
+async function runUtilityTopLevelCommand(parsed: ParsedArgs): Promise<void> {
   const cwd = parsed.cwd ?? process.cwd();
-  switch (parsed.stubCommand) {
+  switch (parsed.utilityCommand) {
     case "init":
       process.stdout.write(`${await initializeProject(cwd)}\n`);
-      return;
-    case "fork":
-      process.stdout.write(
-        "Fork is available inside an active session with /fork so parent session metadata is retained.\n"
-      );
-      return;
-    case "login":
-      process.stdout.write(
-        "Auth is environment/config-file based. Set provider API keys with provider-specific environment variables.\n"
-      );
-      return;
-    case "logout":
-      process.stdout.write(
-        "No persisted CLI login session is active. Remove provider keys from environment or auth files to revoke access.\n"
-      );
       return;
     case "completion":
       process.stdout.write(
@@ -708,6 +886,7 @@ async function runRecognizedTopLevelCommand(parsed: ParsedArgs): Promise<void> {
       process.stdout.write(
         [
           `Sandbox mode: ${config.sandboxMode}; hard sandbox required: ${config.security.requireHardSandbox}`,
+          "Shell/test commands require a hard sandbox and fail closed when Docker/Podman is unavailable.",
           `Adapter: ${config.sandbox.preferredAdapter}; container: ${config.sandbox.containerRuntime}/${config.sandbox.containerImage}`,
           "Run `nexus sandbox doctor` to inspect hard sandbox availability."
         ].join("\n") + "\n"
@@ -745,6 +924,156 @@ async function runRecognizedTopLevelCommand(parsed: ParsedArgs): Promise<void> {
     default:
       process.stdout.write("Command recognized. Use nexus --help for supported options.\n");
   }
+}
+
+type AuthProviderId = "deepseek" | "openai";
+
+function parseForkInput(value: string | undefined): {
+  sessionId?: SessionId;
+  prompt?: string;
+} {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return {};
+  }
+  const [first = "", ...rest] = trimmed.split(/\s+/);
+  if (first.startsWith("nx_")) {
+    const prompt = rest.join(" ").trim();
+    return {
+      sessionId: first as unknown as SessionId,
+      ...(prompt ? { prompt } : {})
+    };
+  }
+  return { prompt: trimmed };
+}
+
+async function latestSessionId(cwd: string): Promise<SessionId | undefined> {
+  const [latest] = await listSessionManifests({ cwd });
+  return latest?.sessionId;
+}
+
+function parseAuthProvider(parsed: ParsedArgs, config: ResolvedConfig): AuthProviderId {
+  const candidate =
+    parsed.authProvider ?? parsed.prompt?.trim().split(/\s+/).find(Boolean) ?? config.modelProvider;
+  if (candidate === "deepseek" || candidate === "openai") {
+    return candidate;
+  }
+  throw new NexusError({
+    category: "auth",
+    message: `Provider '${candidate}' does not support CLI auth. Supported providers: ${supportedAuthProviders().join(", ")}.`,
+    recoverable: true
+  });
+}
+
+function providersFromLogoutArgument(
+  argument: string | undefined,
+  config: ResolvedConfig
+): AuthProviderId[] {
+  const candidate = argument?.trim().split(/\s+/).find(Boolean);
+  if (candidate === "all" || candidate === "--all") {
+    return supportedAuthProviders();
+  }
+  if (!candidate) {
+    return [parseAuthProvider({ command: "logout", json: false, overrides: {} }, config)];
+  }
+  return [
+    parseAuthProvider(
+      { command: "logout", json: false, overrides: {}, authProvider: candidate },
+      config
+    )
+  ];
+}
+
+function supportedAuthProviders(): AuthProviderId[] {
+  return ["deepseek", "openai"];
+}
+
+function defaultProviderApiKeyEnv(provider: AuthProviderId): string {
+  return provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
+}
+
+function resolveAuthFilePath(input: {
+  cwd: string;
+  provider: AuthProviderId;
+  config: ResolvedConfig;
+  overridePath?: string;
+}): string {
+  const configured = input.overridePath ?? input.config.providers[input.provider]?.authFile;
+  if (configured) {
+    return isAbsolute(configured) ? configured : resolve(input.cwd, configured);
+  }
+  return join(homedir(), ".nexus", "auth.json");
+}
+
+async function logoutAuthProviders(input: {
+  cwd: string;
+  config: ResolvedConfig;
+  providers: AuthProviderId[];
+  overridePath?: string;
+}): Promise<string[]> {
+  const messages: string[] = [];
+  for (const provider of input.providers) {
+    const authFilePath = resolveAuthFilePath({
+      cwd: input.cwd,
+      provider,
+      config: input.config,
+      ...(input.overridePath ? { overridePath: input.overridePath } : {})
+    });
+    const record = await readAuthFile(authFilePath);
+    const nestedProviders = readProvidersRecord(record);
+    const hadAuth = Boolean(nestedProviders[provider] ?? record[provider]);
+    delete nestedProviders[provider];
+    delete record[provider];
+    record.providers = nestedProviders;
+    await writeAuthFile(authFilePath, record);
+    const apiKeyEnv =
+      input.config.providers[provider]?.apiKeyEnv ?? defaultProviderApiKeyEnv(provider);
+    messages.push(
+      hadAuth
+        ? `Removed ${provider} persisted auth from ${authFilePath}.`
+        : `No persisted ${provider} auth found in ${authFilePath}.`
+    );
+    if (process.env[apiKeyEnv]) {
+      messages.push(`${apiKeyEnv} is still set; unset it to fully deauthenticate ${provider}.`);
+    }
+  }
+  return messages;
+}
+
+async function readAuthFile(filePath: string): Promise<Record<string, unknown>> {
+  const content = await readFile(filePath, "utf8").catch(() => undefined);
+  if (!content) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    throw new NexusError({
+      category: "auth",
+      message: `Auth file is not valid JSON: ${filePath}`,
+      recoverable: true
+    });
+  }
+}
+
+async function writeAuthFile(filePath: string, record: Record<string, unknown>): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await chmod(filePath, 0o600).catch(() => undefined);
+}
+
+function readProvidersRecord(
+  record: Record<string, unknown>
+): Record<string, Record<string, unknown>> {
+  const providers = isRecord(record.providers) ? record.providers : {};
+  const result: Record<string, Record<string, unknown>> = {};
+  for (const [provider, value] of Object.entries(providers)) {
+    if (isRecord(value)) {
+      result[provider] = { ...value };
+    }
+  }
+  return result;
 }
 
 async function runFullscreenInteractive(inputData: {
@@ -998,6 +1327,18 @@ async function handleFullscreenIntent(inputData: {
     );
     return true;
   }
+  if (intent.type === "auth.logout") {
+    await inputData.publishMessage(
+      (
+        await logoutAuthProviders({
+          cwd: session.cwd,
+          config: inputData.config,
+          providers: providersFromLogoutArgument(intent.argument, inputData.config)
+        })
+      ).join("\n")
+    );
+    return true;
+  }
   if (intent.type === "config.debug") {
     const loaded = inputData.config.sources.map(
       (source) => `${source.loaded ? "loaded" : "missing"} ${source.path}`
@@ -1147,7 +1488,17 @@ async function handleFullscreenIntent(inputData: {
     return true;
   }
   if (intent.type === "agent.open") {
-    await inputData.publishMessage(await renderAgentStatus(intent.argument));
+    await inputData.publishMessage(
+      await renderAgentStatus({
+        argument: intent.argument,
+        session,
+        config: inputData.config,
+        runtime: inputData.runtime,
+        services: inputData.services,
+        eventBus: inputData.eventBus,
+        nonInteractive: false
+      })
+    );
     return true;
   }
   if (intent.type === "context.compact") {
@@ -1425,7 +1776,8 @@ async function runPostMutationGates(input: {
       sessionId: input.session.id,
       eventBus: input.eventBus,
       filesChanged: input.result.filesChanged,
-      ...(diff ? { diff } : {})
+      ...(diff ? { diff } : {}),
+      context
     });
     input.result.finalMessage =
       `${input.result.finalMessage ?? ""}\n\nReview ${review.status}: ${review.summary}`.trim();
@@ -1637,14 +1989,43 @@ async function renderHooksStatus(cwd: string): Promise<string> {
     .join("\n");
 }
 
-async function renderAgentStatus(argument: string | undefined): Promise<string> {
+async function renderAgentStatus(input: {
+  argument: string | undefined;
+  session: NexusSession;
+  config: ResolvedConfig;
+  runtime: NexusRuntime;
+  services: RuntimeServices;
+  eventBus: InMemoryEventBus;
+  nonInteractive: boolean;
+}): Promise<string> {
+  const prompt = input.argument?.trim() || "Summarize the current workspace task.";
   const result = await new SubagentManager().run({
-    name: argument?.trim() || "Explorer Agent",
+    name: input.argument?.trim() || "Explorer Agent",
     role: "explorer",
-    prompt: argument?.trim() || "Summarize the current workspace task.",
-    permissionProfile: "read-only"
+    prompt,
+    permissionProfile: "read-only",
+    session: input.session,
+    runtimeContext: createRuntimeContext(input)
   });
   return `${result.name} ${result.status}: ${result.summary}`;
+}
+
+function createRuntimeContext(input: {
+  session: NexusSession;
+  config: ResolvedConfig;
+  runtime: NexusRuntime;
+  services: RuntimeServices;
+  eventBus: InMemoryEventBus;
+  nonInteractive: boolean;
+}): RuntimeContext {
+  return {
+    session: input.session,
+    config: input.config,
+    eventBus: input.eventBus,
+    storage: input.runtime.getStorage(),
+    services: input.services,
+    nonInteractive: input.nonInteractive
+  };
 }
 
 async function renderUtilityIntentMessage(input: {
@@ -2016,12 +2397,22 @@ async function handleContextCompactCommand(input: {
     cwd: input.session.cwd,
     config: input.config
   });
+  const semanticCandidates = await createModelLearningCandidates({
+    session: input.session,
+    config: input.config,
+    services: input.services,
+    eventBus: input.eventBus,
+    context,
+    commandsRun: input.commandsRun,
+    filesChanged: input.filesChanged
+  });
   const candidates = await input.learningPlane.generateCandidates({
     sessionId: input.session.id,
     eventBus: input.eventBus,
     context,
     commandsRun: input.commandsRun,
-    filesChanged: input.filesChanged
+    filesChanged: input.filesChanged,
+    ...(semanticCandidates.length > 0 ? { semanticCandidates } : {})
   });
   await input.sdlcManager.learn({
     sessionId: input.session.id,
@@ -2121,6 +2512,51 @@ async function createModelReviewFindings(input: {
       ]
     });
     return normalizeModelReviewFindings(extractJsonObject(result.message));
+  } catch {
+    return [];
+  }
+}
+
+async function createModelLearningCandidates(input: {
+  session: NexusSession;
+  config: ResolvedConfig;
+  services: RuntimeServices;
+  eventBus: InMemoryEventBus;
+  context: CompiledContext;
+  commandsRun: string[];
+  filesChanged: string[];
+}): Promise<LearningCandidateDraft[]> {
+  if (input.config.modelProvider === "fake") {
+    return [];
+  }
+  try {
+    const result = await input.services.models.call({
+      providerId: input.config.modelProvider,
+      sessionId: input.session.id,
+      model: input.config.model,
+      eventBus: input.eventBus,
+      context: input.context,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Return only compact JSON with a candidates array. Each candidate has scope, type, text, and confidence. Create durable repo/user habits, test maps, workflows, or known failures only; never include secrets or raw credentials."
+        },
+        {
+          role: "user",
+          content: safeJsonStringify({
+            compactSummary: input.context.compactSummary,
+            commandsRun: input.commandsRun,
+            filesChanged: input.filesChanged,
+            testCommands: input.context.repository.testCommands,
+            packageScripts: input.context.repository.packageScripts,
+            existingProjectMemory: input.context.memories.project.slice(0, 4000),
+            existingUserMemory: input.context.memories.user.slice(0, 2000)
+          })
+        }
+      ]
+    });
+    return normalizeModelLearningCandidates(extractJsonObject(result.message));
   } catch {
     return [];
   }
@@ -2242,7 +2678,7 @@ function normalizeModelPlanSuggestion(value: unknown): ModelPlanSuggestion | und
 function normalizeModelReviewFindings(value: unknown): ReviewFinding[] {
   const findings = isRecord(value) ? readJsonArray(value.findings) : [];
   return findings
-    .map((item, index) => {
+    .map((item, index): ReviewFinding | undefined => {
       if (
         !isRecord(item) ||
         typeof item.title !== "string" ||
@@ -2252,18 +2688,47 @@ function normalizeModelReviewFindings(value: unknown): ReviewFinding[] {
       }
       const severity = normalizeSeverity(item.severity);
       const category = normalizeReviewCategory(item.category);
-      return {
+      const finding: ReviewFinding = {
         id: `finding_model_${index + 1}`,
         severity,
         title: item.title,
-        description: item.description,
-        ...(typeof item.file === "string" ? { file: item.file } : {}),
-        ...(typeof item.line === "number" ? { line: item.line } : {}),
-        ...(typeof item.recommendation === "string" ? { recommendation: item.recommendation } : {}),
-        ...(category ? { category } : {})
+        description: item.description
       };
+      if (typeof item.file === "string") {
+        finding.file = item.file;
+      }
+      if (typeof item.line === "number") {
+        finding.line = item.line;
+      }
+      if (typeof item.recommendation === "string") {
+        finding.recommendation = item.recommendation;
+      }
+      if (category) {
+        finding.category = category;
+      }
+      return finding;
     })
     .filter((finding): finding is ReviewFinding => Boolean(finding));
+}
+
+function normalizeModelLearningCandidates(value: unknown): LearningCandidateDraft[] {
+  const candidates = isRecord(value) ? readJsonArray(value.candidates) : [];
+  return candidates
+    .map((item) => {
+      if (!isRecord(item) || typeof item.text !== "string" || !item.text.trim()) {
+        return undefined;
+      }
+      const scope = normalizeLearningScope(item.scope);
+      const type = normalizeLearningType(item.type);
+      const confidence = typeof item.confidence === "number" ? item.confidence : undefined;
+      return {
+        ...(scope ? { scope } : {}),
+        ...(type ? { type } : {}),
+        text: item.text,
+        ...(confidence !== undefined ? { confidence } : {})
+      };
+    })
+    .filter((candidate): candidate is LearningCandidateDraft => Boolean(candidate));
 }
 
 function extractJsonObject(text: string): unknown {
@@ -2325,6 +2790,26 @@ function normalizeReviewCategory(value: unknown): ReviewFinding["category"] | un
     value === "testing" ||
     value === "maintainability" ||
     value === "process"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeLearningScope(value: unknown): LearningCandidateDraft["scope"] | undefined {
+  if (value === "project" || value === "user" || value === "session") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeLearningType(value: unknown): LearningCandidateDraft["type"] | undefined {
+  if (
+    value === "workflow" ||
+    value === "test-map" ||
+    value === "preference" ||
+    value === "known-failure" ||
+    value === "project-fact"
   ) {
     return value;
   }
@@ -2544,10 +3029,13 @@ type ParsedCommand =
   | "version"
   | "interactive"
   | "resume"
+  | "fork"
+  | "login"
+  | "logout"
   | "mcp"
   | "skills"
   | "hooks"
-  | "stub";
+  | "utility";
 
 interface ParsedArgs {
   command: ParsedCommand;
@@ -2556,13 +3044,20 @@ interface ParsedArgs {
   cwd?: string;
   configPath?: string;
   overrides: ConfigOverrides;
-  stubCommand?: string;
+  utilityCommand?: string;
+  authProvider?: string;
+  authApiKey?: string;
+  authFile?: string;
+  authOrganization?: string;
+  authProject?: string;
+  authAll?: boolean;
   image?: string;
   oss?: boolean;
   search?: boolean;
   noAltScreen?: boolean;
   verify?: string;
   rollbackOnVerifyFail?: boolean;
+  allowMutations?: boolean;
   outputPath?: string;
   patchPath?: string;
   reportPath?: string;
@@ -2597,11 +3092,18 @@ function parseArgs(args: string[]): ParsedArgs {
     if (!commandSelected && isKnownCommand(arg)) {
       commandSelected = true;
       parseState.command =
-        arg === "exec" || arg === "resume" || arg === "mcp" || arg === "skills" || arg === "hooks"
+        arg === "exec" ||
+        arg === "resume" ||
+        arg === "fork" ||
+        arg === "login" ||
+        arg === "logout" ||
+        arg === "mcp" ||
+        arg === "skills" ||
+        arg === "hooks"
           ? arg
-          : "stub";
-      if (parseState.command === "stub") {
-        parseState.stubCommand = arg;
+          : "utility";
+      if (parseState.command === "utility") {
+        parseState.utilityCommand = arg;
       }
       continue;
     }
@@ -2637,6 +3139,36 @@ function parseArgs(args: string[]): ParsedArgs {
 
     if (arg === "--config" || arg === "-c") {
       parseState.configPath = readFlagValue(args, (index += 1), arg);
+      continue;
+    }
+
+    if (arg === "--provider") {
+      parseState.authProvider = readFlagValue(args, (index += 1), arg);
+      continue;
+    }
+
+    if (arg === "--api-key") {
+      parseState.authApiKey = readFlagValue(args, (index += 1), arg);
+      continue;
+    }
+
+    if (arg === "--auth-file") {
+      parseState.authFile = readFlagValue(args, (index += 1), arg);
+      continue;
+    }
+
+    if (arg === "--organization") {
+      parseState.authOrganization = readFlagValue(args, (index += 1), arg);
+      continue;
+    }
+
+    if (arg === "--project") {
+      parseState.authProject = readFlagValue(args, (index += 1), arg);
+      continue;
+    }
+
+    if (arg === "--all") {
+      parseState.authAll = true;
       continue;
     }
 
@@ -2679,6 +3211,13 @@ function parseArgs(args: string[]): ParsedArgs {
 
     if (arg === "--rollback-on-verify-fail") {
       parseState.rollbackOnVerifyFail = true;
+      continue;
+    }
+
+    if (arg === "--allow-mutations") {
+      parseState.allowMutations = true;
+      parseState.overrides.sandboxMode ??= "workspace-write";
+      parseState.overrides.approvalPolicy ??= "never";
       continue;
     }
 
@@ -2738,15 +3277,9 @@ function isKnownCommand(value: string): boolean {
     "mcp-server",
     "skills",
     "hooks",
-    "completion",
+    "init",
     "features",
-    "sandbox",
-    "ship",
-    "memories",
-    "update",
-    "apply",
-    "cloud",
-    "app-server"
+    "sandbox"
   ].includes(value);
 }
 
@@ -2815,17 +3348,23 @@ Usage:
   nexus [prompt]
   nexus exec [--json] [flags] "<prompt>"
   nexus resume [--last]
+  nexus fork [session-id] [prompt]
+  nexus login [provider] --api-key <key>
+  nexus logout [provider|--all]
 
 Commands:
   nexus                Start interactive terminal mode
   nexus "<prompt>"     Start interactive mode and run an initial prompt
   exec                 Run a non-interactive task
   resume               Resume the latest local session
-  fork                 Recognized stub
+  fork                 Create a child session from the latest or specified session
   mcp                  List, add, remove, trust, enable, or restrict local MCP servers
   skills               List available skills
   hooks                List configured lifecycle hooks
-  login/logout         Recognized stubs
+  init                 Create .nexus/config.toml and AGENTS.md starter files
+  features             Print resolved feature flags as JSON
+  sandbox              Show sandbox status; use "sandbox doctor" for availability
+  login/logout         Manage provider auth in the configured auth file
   --json               Stream JSONL events to stdout
   --model, -m          Override active model
   --model-provider     Override active provider
@@ -2834,9 +3373,16 @@ Commands:
   --sandbox            Override sandbox mode
   --ask-for-approval   Override approval policy
   --config, -c         Load an explicit config file
+  --provider           Provider for login/logout (deepseek or openai)
+  --api-key            API key to persist for login
+  --auth-file          Override provider auth file path
+  --organization       OpenAI organization for login
+  --project            OpenAI project for login
+  --all                Logout all supported providers
   --no-alt-screen      Use inline interactive fallback instead of the full-screen TUI
   --verify <cmd|auto>  Run verification after exec and exit 6 on failure
   --rollback-on-verify-fail Restore latest checkpoint when exec verification fails
+  --allow-mutations   Allow non-interactive workspace file mutations with explicit opt-in
   --output <path>      Write final answer artifact to a workspace path
   --patch <path>       Write redacted session patch artifact to a workspace path
   --report <path>      Write verification report artifact to a workspace path
@@ -2851,7 +3397,7 @@ Commands:
   /rollback [id]       Restore the latest checkpoint or a specific checkpoint id
   /compact             Generate learning candidates from session context
   /memories [action]   Show, accept, reject, edit, or delete memories
-  /agent [task]        Run a read-only subagent summary
+  /agent [task]        Run a read-only subagent task
   /mcp                 Show configured MCP servers
   /skills              Show available skills
   /hooks               Show configured lifecycle hooks

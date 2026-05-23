@@ -1,5 +1,6 @@
-import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { type SessionId, safeJsonStringify } from "@nexus/shared";
 
 export interface SessionManifest {
@@ -21,6 +22,13 @@ export interface SessionManifest {
   reviewStatus?: "passed" | "warnings" | "failed";
   sdlcStages?: string[];
   learningCandidateCount?: number;
+  resumeReplay?: {
+    replayedAt: string;
+    replayedEventCount: number;
+    transcriptMessageCount: number;
+    sdlcStageCount: number;
+    learningCandidateCount: number;
+  };
   artifacts?: {
     finalAnswerPath: string;
     diffPatchPath: string;
@@ -62,6 +70,101 @@ export interface SessionStorage {
   writeArtifact(name: keyof SessionStorage["artifacts"], content: string): Promise<void>;
 }
 
+export interface SafeAtomicWriteTextInput {
+  path: string;
+  allowedRoot: string;
+  workspaceRoot: string;
+  content: string;
+  rootDescription?: string;
+}
+
+export interface SafeReadTextFileInput {
+  path: string;
+  allowedRoot: string;
+  workspaceRoot: string;
+  rootDescription?: string;
+}
+
+export async function safeAtomicWriteText(input: SafeAtomicWriteTextInput): Promise<void> {
+  const workspaceRoot = resolve(input.workspaceRoot);
+  const allowedRoot = resolve(input.allowedRoot);
+  const targetPath = resolve(input.path);
+  const rootDescription = input.rootDescription ?? "storage root";
+
+  if (!isInside(allowedRoot, workspaceRoot)) {
+    throw new Error(`${rootDescription} must be inside the workspace.`);
+  }
+  if (!isInside(targetPath, allowedRoot)) {
+    throw new Error("Write target escapes the allowed storage root.");
+  }
+
+  await mkdir(allowedRoot, { recursive: true });
+  await assertDirectoryInsideWorkspace(workspaceRoot, allowedRoot, rootDescription);
+
+  const parent = dirname(targetPath);
+  await mkdir(parent, { recursive: true });
+  await assertDirectoryInsideWorkspace(workspaceRoot, parent, "write target parent");
+
+  const realAllowedRoot = await realpath(allowedRoot).catch(() => allowedRoot);
+  const realParent = await realpath(parent).catch(() => parent);
+  if (!isInside(realParent, realAllowedRoot)) {
+    throw new Error("Write target parent resolves outside the allowed storage root.");
+  }
+
+  const targetMetadata = await lstat(targetPath).catch(() => undefined);
+  if (targetMetadata?.isSymbolicLink()) {
+    throw new Error("Write target must not be a symlink.");
+  }
+
+  const tempPath = join(parent, `.${basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(tempPath, input.content, { encoding: "utf8", flag: "wx" });
+    await rename(tempPath, targetPath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function safeReadTextFile(input: SafeReadTextFileInput): Promise<string | undefined> {
+  const workspaceRoot = resolve(input.workspaceRoot);
+  const allowedRoot = resolve(input.allowedRoot);
+  const targetPath = resolve(input.path);
+  const rootDescription = input.rootDescription ?? "storage root";
+
+  if (!isInside(allowedRoot, workspaceRoot)) {
+    throw new Error(`${rootDescription} must be inside the workspace.`);
+  }
+  if (!isInside(targetPath, allowedRoot)) {
+    throw new Error("Read target escapes the allowed storage root.");
+  }
+
+  await assertOptionalDirectoryInsideWorkspace(workspaceRoot, allowedRoot, rootDescription);
+  await assertOptionalDirectoryInsideWorkspace(
+    workspaceRoot,
+    dirname(targetPath),
+    "read target parent"
+  );
+
+  const realAllowedRoot = await realpath(allowedRoot).catch(() => allowedRoot);
+  const realParent = await realpath(dirname(targetPath)).catch(() => dirname(targetPath));
+  if (!isInside(realParent, realAllowedRoot)) {
+    throw new Error("Read target parent resolves outside the allowed storage root.");
+  }
+
+  const targetMetadata = await lstat(targetPath).catch(() => undefined);
+  if (!targetMetadata) {
+    return undefined;
+  }
+  if (targetMetadata.isSymbolicLink()) {
+    throw new Error("Read target must not be a symlink.");
+  }
+  if (!targetMetadata.isFile()) {
+    throw new Error("Read target must be a file.");
+  }
+  return readFile(targetPath, "utf8");
+}
+
 export async function readSessionManifest(input: {
   cwd: string;
   sessionId: SessionId;
@@ -99,9 +202,15 @@ export async function createSessionStorage(input: {
   sessionId: SessionId;
 }): Promise<SessionStorage> {
   const cwd = resolve(input.cwd);
+  const sessionId = assertValidSessionId(input.sessionId);
   const projectStorageRoot = join(cwd, ".nexus");
   await assertSafeProjectStorageRoot(cwd, projectStorageRoot);
-  const runDirectory = join(projectStorageRoot, "runs", input.sessionId);
+  const runDirectory = join(projectStorageRoot, "runs", sessionId);
+  await assertOptionalDirectoryInsideWorkspace(
+    cwd,
+    join(projectStorageRoot, "runs"),
+    ".nexus runs directory"
+  );
   const eventLogPath = join(runDirectory, "events.jsonl");
   const manifestPath = join(runDirectory, "manifest.json");
   const artifacts = {
@@ -120,6 +229,7 @@ export async function createSessionStorage(input: {
   };
 
   await mkdir(runDirectory, { recursive: true });
+  await assertDirectoryInsideWorkspace(cwd, runDirectory, "session run directory");
 
   return {
     cwd,
@@ -129,25 +239,38 @@ export async function createSessionStorage(input: {
     manifestPath,
     artifacts,
     async writeManifest(manifest: SessionManifest): Promise<void> {
-      await safeWriteFile(manifestPath, `${safeJsonStringify(manifest)}\n`, runDirectory);
+      await safeWriteFile(manifestPath, `${safeJsonStringify(manifest)}\n`, runDirectory, cwd);
     },
     async readManifest(): Promise<SessionManifest> {
       return JSON.parse(await readFile(manifestPath, "utf8")) as SessionManifest;
     },
     async writeArtifact(name: keyof SessionStorage["artifacts"], content: string): Promise<void> {
-      await safeWriteFile(artifacts[name], content, runDirectory);
+      await safeWriteFile(artifacts[name], content, runDirectory, cwd);
     }
   };
+}
+
+function assertValidSessionId(sessionId: SessionId): string {
+  const value = String(sessionId);
+  if (!/^nx_[A-Za-z0-9_-]{1,128}$/.test(value)) {
+    throw new Error("Invalid session id. Session ids must match ^nx_[A-Za-z0-9_-]{1,128}$.");
+  }
+  return value;
 }
 
 async function safeWriteFile(
   filePath: string,
   content: string,
-  allowedRoot: string
+  allowedRoot: string,
+  workspaceRoot: string
 ): Promise<void> {
-  await assertSafeWriteTarget(filePath, allowedRoot);
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, content, "utf8");
+  await safeAtomicWriteText({
+    path: filePath,
+    allowedRoot,
+    workspaceRoot,
+    content,
+    rootDescription: "session run directory"
+  });
 }
 
 async function assertSafeProjectStorageRoot(
@@ -169,15 +292,32 @@ async function assertSafeProjectStorageRoot(
   }
 }
 
-async function assertSafeWriteTarget(filePath: string, allowedRoot: string): Promise<void> {
-  const root = resolve(allowedRoot);
-  const parent = dirname(resolve(filePath));
-  await mkdir(parent, { recursive: true });
-  const realRoot = await realpath(root).catch(() => root);
-  const realParent = await realpath(parent).catch(() => parent);
-  if (!isInside(realParent, realRoot)) {
-    throw new Error("Artifact path resolves outside the session run directory.");
+async function assertDirectoryInsideWorkspace(
+  workspaceRoot: string,
+  directory: string,
+  description: string
+): Promise<void> {
+  const metadata = await lstat(directory).catch(() => undefined);
+  if (metadata?.isSymbolicLink()) {
+    throw new Error(`${description} must not be a symlink.`);
   }
+  const realWorkspaceRoot = await realpath(workspaceRoot).catch(() => workspaceRoot);
+  const realDirectory = await realpath(directory).catch(() => directory);
+  if (!isInside(realDirectory, realWorkspaceRoot)) {
+    throw new Error(`${description} resolves outside the workspace.`);
+  }
+}
+
+async function assertOptionalDirectoryInsideWorkspace(
+  workspaceRoot: string,
+  directory: string,
+  description: string
+): Promise<void> {
+  const metadata = await lstat(directory).catch(() => undefined);
+  if (!metadata) {
+    return;
+  }
+  await assertDirectoryInsideWorkspace(workspaceRoot, directory, description);
 }
 
 function isInside(target: string, root: string): boolean {

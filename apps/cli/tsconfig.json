@@ -21,6 +21,7 @@
       "@nexus/security": ["packages/security/src/index.ts"],
       "@nexus/shared": ["packages/shared/src/index.ts"],
       "@nexus/skills": ["packages/skills/src/index.ts"],
+      "@nexus/storage": ["packages/storage/src/index.ts"],
       "@nexus/test-utils": ["packages/test-utils/src/index.ts"],
       "@nexus/tool-bus": ["packages/tool-bus/src/index.ts"],
       "@nexus/tui": ["packages/tui/src/index.tsx"]

@@ -91,6 +91,7 @@ export interface RuntimeIntent {
     | "approval.deny"
     | "approval.details"
     | "approval.list"
+    | "auth.logout"
     | "process.list"
     | "process.stop"
     | "session.new"
@@ -107,7 +108,7 @@ export interface RuntimeIntent {
     | "slash.help"
     | "transcript.clear"
     | "session.quit"
-    | "placeholder";
+    | "unsupported";
   command?: string;
   argument?: string;
   message?: string;
@@ -117,15 +118,11 @@ export const slashCommands = [
   "/model",
   "/fast",
   "/permissions",
-  "/theme",
-  "/statusline",
-  "/raw",
-  "/copy",
-  "/mention",
   "/approvals",
   "/approve",
   "/approve-session",
   "/deny",
+  "/logout",
   "/status",
   "/debug-config",
   "/plan",
@@ -147,17 +144,21 @@ export const slashCommands = [
   "/new",
   "/resume",
   "/fork",
-  "/side",
   "/init",
-  "/apps",
-  "/plugins",
-  "/experimental",
-  "/sandbox-add-read-dir",
-  "/keymap",
-  "/vim",
   "/quit",
   "/exit",
   "/help"
+] as const;
+
+export const slashCommandGroups = [
+  { label: "Session", commands: ["/status", "/new", "/resume", "/fork", "/clear", "/quit"] },
+  { label: "SDLC", commands: ["/goal", "/plan", "/verify", "/review", "/ship", "/rollback"] },
+  { label: "Context", commands: ["/diff", "/compact", "/memories"] },
+  {
+    label: "Runtime",
+    commands: ["/approvals", "/approve", "/approve-session", "/deny", "/ps", "/stop"]
+  },
+  { label: "Extensions", commands: ["/agent", "/mcp", "/skills", "/hooks"] }
 ] as const;
 
 export function createInitialTuiState(config: ResolvedConfig): TuiState {
@@ -222,6 +223,52 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       break;
     case "model.usage":
       updateTokenUsage(next, readUnknown(event, "usage"));
+      break;
+    case "agent.step.started": {
+      const phase = readString(event, "phase") ?? "agent";
+      const label = readString(event, "label") ?? phase;
+      next.sdlcStage = phase;
+      next.transcript.push({ kind: "system", text: `Agent ${phase}: ${label}` });
+      break;
+    }
+    case "agent.step.completed": {
+      const phase = readString(event, "phase") ?? "agent";
+      const summary = readString(event, "summary") ?? readString(event, "label") ?? "completed";
+      next.transcript.push({ kind: "system", text: `Agent ${phase} completed: ${summary}` });
+      break;
+    }
+    case "agent.step.blocked":
+      next.sdlcStage = "blocked";
+      next.transcript.push({
+        kind: "error",
+        text: `Agent blocked: ${readString(event, "reason") ?? "unknown"}`
+      });
+      break;
+    case "agent.loop.completed":
+      next.transcript.push({
+        kind: "system",
+        text: `Agent ${readString(event, "status") ?? "completed"}: ${String(
+          readUnknown(event, "modelTurns") ?? 0
+        )} model turn(s), ${String(readUnknown(event, "toolCalls") ?? 0)} tool call(s)`
+      });
+      break;
+    case "agent.critic.completed":
+      next.transcript.push({
+        kind: "sdlc",
+        text: `Critic ${readString(event, "decision") ?? "completed"}: ${readString(event, "summary") ?? ""}`
+      });
+      break;
+    case "subagent.started":
+      next.transcript.push({
+        kind: "system",
+        text: `Subagent started: ${readString(event, "name") ?? "subagent"} (${readString(event, "role") ?? "role"})`
+      });
+      break;
+    case "subagent.completed":
+      next.transcript.push({
+        kind: "system",
+        text: `Subagent ${readString(event, "status") ?? "completed"}: ${readString(event, "summary") ?? ""}`
+      });
       break;
     case "tool.requested": {
       const tool = readString(event, "tool") ?? "unknown";
@@ -520,6 +567,8 @@ export function parseSlashCommand(input: string): RuntimeIntent {
       return { type: "approval.approve_session", command, argument };
     case "/deny":
       return { type: "approval.deny", command, argument };
+    case "/logout":
+      return { type: "auth.logout", command, argument };
     case "/ps":
       return { type: "process.list", command, argument };
     case "/stop":
@@ -556,13 +605,13 @@ export function parseSlashCommand(input: string): RuntimeIntent {
     default:
       if (slashCommands.includes(command as (typeof slashCommands)[number])) {
         return {
-          type: "placeholder",
+          type: "unsupported",
           command,
-          message: `${command} is recognized but not implemented in this build.`
+          message: `${command} is recognized; use /help for supported behavior in this build.`
         };
       }
       return {
-        type: "placeholder",
+        type: "unsupported",
         command,
         message: `${command || "Slash command"} is not supported. Use /help.`
       };
@@ -675,9 +724,9 @@ export function TranscriptView(input: { entries: TuiTranscriptEntry[] }): ReactE
         const color = colorForEntry(entry.kind);
         const text = renderTranscriptEntry(entry);
         return color ? (
-          <Text key={`${index}-${entry.kind}`} color={color}>
-            {text}
-          </Text>
+          <Box key={`${index}-${entry.kind}`} flexDirection="column" marginBottom={0}>
+            <Text color={color}>{text}</Text>
+          </Box>
         ) : (
           <Text key={`${index}-${entry.kind}`}>{text}</Text>
         );
@@ -709,6 +758,7 @@ export function SlashCommandPalette(input: {
   return (
     <Box borderStyle="single" flexDirection="column" paddingX={1}>
       <Text bold>Commands</Text>
+      <Text color="gray">{renderSlashPalette()}</Text>
       {commands.map((command, index) => (
         <Text key={command} inverse={index === input.selectedIndex}>
           {command}
@@ -764,10 +814,12 @@ export function ApprovalCardView(input: {
 
 export function DiffViewer(input: { diff?: string }): ReactElement {
   const diff = input.diff?.trim();
-  const lines = diff ? diff.split(/\r?\n/).slice(0, 8) : [];
+  const summary = diff ? renderDiffSummary(diff) : "No diff available.";
+  const lines = diff ? diff.split(/\r?\n/).slice(0, 10) : [];
   return (
     <Box borderStyle="single" flexDirection="column" paddingX={1} minHeight={4}>
       <Text bold>Diff</Text>
+      <Text color={diff ? "cyan" : "gray"}>{summary}</Text>
       {lines.length === 0 ? <Text color="gray">No diff available.</Text> : null}
       {lines.map((line, index) => {
         const color = line.startsWith("+") ? "green" : line.startsWith("-") ? "red" : undefined;
@@ -798,6 +850,7 @@ export function ProcessPanel(input: {
   return (
     <Box borderStyle="single" flexDirection="column" paddingX={1}>
       <Text bold>Processes</Text>
+      <Text color="gray">{renderProcessSummary(input)}</Text>
       {input.activeTools.length === 0 && input.processes.length === 0 ? (
         <Text color="gray">Idle.</Text>
       ) : null}
@@ -817,7 +870,8 @@ export function MemoryPanel(input: { pendingCount: number }): ReactElement {
   return (
     <Box borderStyle="single" flexDirection="column" paddingX={1}>
       <Text bold>Memory</Text>
-      <Text>pending: {input.pendingCount}</Text>
+      <Text>{renderMemoryPanelText(input.pendingCount)}</Text>
+      <Text color="gray">/memories accept | reject | list</Text>
     </Box>
   );
 }
@@ -858,7 +912,9 @@ export function renderStatusLine(state: TuiState): string {
 }
 
 export function renderSlashPalette(): string {
-  return `Commands: ${slashCommands.join(" ")}`;
+  return slashCommandGroups
+    .map((group) => `${group.label}: ${group.commands.join(" ")}`)
+    .join(" | ");
 }
 
 export function renderTranscriptEntry(entry: TuiTranscriptEntry): string {
@@ -877,7 +933,42 @@ export function renderTranscriptEntry(entry: TuiTranscriptEntry): string {
     system: "system",
     error: "error"
   }[entry.kind];
-  return `[${label}] ${entry.text}`;
+  return `[${label}] ${truncateDisplay(entry.text, 220)}`;
+}
+
+export function renderDiffSummary(diff: string): string {
+  const lines = diff.split(/\r?\n/);
+  const files = new Set<string>();
+  let added = 0;
+  let removed = 0;
+  for (const line of lines) {
+    const gitFile = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+    if (gitFile?.[2]) {
+      files.add(gitFile[2]);
+    }
+    if (line.startsWith("+++ b/")) {
+      files.add(line.slice("+++ b/".length));
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      added += 1;
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      removed += 1;
+    }
+  }
+  return `${files.size || 1} file(s), +${added}/-${removed}, ${lines.length} line(s)`;
+}
+
+export function renderProcessSummary(input: {
+  processes: ProcessCard[];
+  activeTools: string[];
+}): string {
+  const runningProcesses = input.processes.filter((process) => process.status === "running").length;
+  return `${input.activeTools.length} active tool(s), ${runningProcesses} running process(es)`;
+}
+
+export function renderMemoryPanelText(pendingCount: number): string {
+  return `pending: ${pendingCount}`;
 }
 
 export function renderApprovalCard(card: ApprovalCard): string {
@@ -969,6 +1060,13 @@ function collapseLongText(text: string): string {
     return text;
   }
   return `${text.slice(0, 220)}... (${text.length - 220} more chars)`;
+}
+
+function truncateDisplay(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function colorForEntry(

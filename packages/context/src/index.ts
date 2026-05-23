@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { promisify } from "node:util";
 import { type ResolvedConfig } from "@nexus/config";
 import { PromptInjectionDetector, type PromptInjectionFinding } from "@nexus/security";
+import { safeReadTextFile } from "@nexus/storage";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,6 +32,7 @@ export interface MentionResolution {
   mention: string;
   path: string;
   exists: boolean;
+  snippet?: string;
 }
 
 export interface MemoryInjection {
@@ -54,6 +56,40 @@ export interface ToolOutputSummary {
   summary: string;
 }
 
+export interface SessionReplaySummary {
+  resumed: boolean;
+  eventCount: number;
+  transcript: Array<{
+    role: "user" | "assistant";
+    text: string;
+    timestamp: string;
+  }>;
+  filesChanged: string[];
+  commandsRun: string[];
+  sdlcStages: string[];
+  learningCandidateCount: number;
+}
+
+export interface SymbolIndexEntry {
+  name: string;
+  kind: "function" | "class" | "const" | "type" | "interface" | "export";
+  path: string;
+  line: number;
+  exported: boolean;
+}
+
+export interface TestMapEntry {
+  sourcePath: string;
+  testPaths: string[];
+  command?: string;
+}
+
+export interface WorkspacePackageContext {
+  path: string;
+  name?: string;
+  scripts: Record<string, string>;
+}
+
 export interface CompiledContext {
   cwd: string;
   model: string;
@@ -66,12 +102,16 @@ export interface CompiledContext {
     topLevelFiles: string[];
     packageScripts: Record<string, string>;
     testCommands: string[];
+    workspacePackages: WorkspacePackageContext[];
+    symbols: SymbolIndexEntry[];
+    testMap: TestMapEntry[];
     repoMap: RepoMap;
     git: GitContext;
   };
   mentions: MentionResolution[];
   memories: MemoryInjection;
   toolOutputs: ToolOutputSummary[];
+  sessionReplay?: SessionReplaySummary;
   tokenBudget: TokenBudgetEstimate;
   compactSummary: string;
   security: {
@@ -80,7 +120,9 @@ export interface CompiledContext {
 }
 
 export class ContextCompiler {
-  public constructor(private readonly options: { userMemoryRoot?: string } = {}) {}
+  public constructor(
+    private readonly options: { userMemoryRoot?: string; sessionReplay?: SessionReplaySummary } = {}
+  ) {}
 
   public async compile(input: {
     cwd: string;
@@ -94,24 +136,33 @@ export class ContextCompiler {
     const agentsMd = await readOptionalText(join(repoRoot, "AGENTS.md"));
     const packageJson = await readPackageJson(repoRoot);
     const repoMap = await buildRepoMap(repoRoot);
+    const packageManager = detectPackageManager(topLevelFiles);
+    const workspacePackages = await buildWorkspacePackages(repoRoot, repoMap);
+    const symbols = await buildSymbolIndex(repoRoot, repoMap);
+    const testMap = buildTestMap(repoMap, packageManager, packageJson.scripts, workspacePackages);
     const git = await readGitContext(repoRoot);
     const memories = await readMemories(repoRoot, this.options.userMemoryRoot);
     const mentions = await resolveMentions(repoRoot, input.prompt ?? "");
     const toolOutputs = input.toolOutputs ?? [];
-    const promptInjectionFindings =
-      input.config.security.promptInjectionDetection && agentsMd
-        ? new PromptInjectionDetector().detect(agentsMd)
-        : [];
+    const promptInjectionFindings = input.config.security.promptInjectionDetection
+      ? await detectPromptInjectionSources({
+          repoRoot,
+          ...(agentsMd ? { agentsMd } : {}),
+          repoMap,
+          toolOutputs
+        })
+      : [];
     const compactSummary = buildCompactSummary({
       cwd,
       repoRoot,
-      packageManager: detectPackageManager(topLevelFiles),
+      packageManager,
       packageScripts: packageJson.scripts,
       repoMap,
       git,
       memories,
       mentions,
-      toolOutputs
+      toolOutputs,
+      ...(this.options.sessionReplay ? { sessionReplay: this.options.sessionReplay } : {})
     });
     const tokenBudget = estimateTokenBudget({
       prompt: input.prompt ?? "",
@@ -120,7 +171,8 @@ export class ContextCompiler {
       git,
       memories,
       toolOutputs,
-      compactSummary
+      compactSummary,
+      ...(this.options.sessionReplay ? { sessionReplay: this.options.sessionReplay } : {})
     });
 
     return {
@@ -130,17 +182,21 @@ export class ContextCompiler {
       repository: {
         repoRoot,
         hasPackageJson: topLevelFiles.includes("package.json"),
-        packageManager: detectPackageManager(topLevelFiles),
+        packageManager,
         ...(agentsMd ? { agentsMd } : {}),
         topLevelFiles,
         packageScripts: packageJson.scripts,
-        testCommands: detectTestCommands(detectPackageManager(topLevelFiles), packageJson.scripts),
+        testCommands: detectTestCommands(packageManager, packageJson.scripts, workspacePackages),
+        workspacePackages,
+        symbols,
+        testMap,
         repoMap,
         git
       },
       mentions,
       memories,
       toolOutputs,
+      ...(this.options.sessionReplay ? { sessionReplay: this.options.sessionReplay } : {}),
       tokenBudget,
       compactSummary,
       security: {
@@ -254,13 +310,16 @@ function detectPackageManager(files: string[]): "pnpm" | "npm" | "yarn" | "unkno
   return "unknown";
 }
 
-async function readPackageJson(cwd: string): Promise<{ scripts: Record<string, string> }> {
+async function readPackageJson(
+  cwd: string
+): Promise<{ name?: string; scripts: Record<string, string> }> {
   const content = await readOptionalText(join(cwd, "package.json"));
   if (!content) {
     return { scripts: {} };
   }
+  let parsed: { name?: unknown; scripts?: unknown };
   try {
-    const parsed = JSON.parse(content) as { scripts?: unknown };
+    parsed = JSON.parse(content) as { name?: unknown; scripts?: unknown };
     if (
       typeof parsed.scripts === "object" &&
       parsed.scripts !== null &&
@@ -272,21 +331,35 @@ async function readPackageJson(cwd: string): Promise<{ scripts: Record<string, s
           scripts[name] = value;
         }
       }
-      return { scripts };
+      return {
+        ...(typeof parsed.name === "string" ? { name: parsed.name } : {}),
+        scripts
+      };
     }
   } catch {
     return { scripts: {} };
   }
-  return { scripts: {} };
+  return { ...(typeof parsed.name === "string" ? { name: parsed.name } : {}), scripts: {} };
 }
 
 function detectTestCommands(
   packageManager: "pnpm" | "npm" | "yarn" | "unknown",
-  scripts: Record<string, string>
+  scripts: Record<string, string>,
+  workspacePackages: WorkspacePackageContext[] = []
 ): string[] {
-  return ["test", "typecheck", "lint"]
+  const rootCommands = ["test", "typecheck", "lint"]
     .filter((script) => Boolean(scripts[script]))
     .map((script) => packageCommand(packageManager, script));
+  const packageCommands = workspacePackages.flatMap((workspacePackage) =>
+    ["test", "typecheck", "lint"]
+      .filter((script) => Boolean(workspacePackage.scripts[script]))
+      .map((script) =>
+        packageManager === "pnpm"
+          ? `pnpm --filter ${workspacePackage.name ?? workspacePackage.path} ${script}`
+          : `${packageCommand(packageManager, script)} --workspace ${workspacePackage.name ?? workspacePackage.path}`
+      )
+  );
+  return [...new Set([...rootCommands, ...packageCommands])].slice(0, 20);
 }
 
 function packageCommand(packageManager: string, script: string): string {
@@ -297,6 +370,140 @@ function packageCommand(packageManager: string, script: string): string {
     return `yarn ${script}`;
   }
   return `npm run ${script}`;
+}
+
+async function buildWorkspacePackages(
+  repoRoot: string,
+  repoMap: RepoMap
+): Promise<WorkspacePackageContext[]> {
+  const packageFiles = repoMap.files
+    .map((file) => file.path)
+    .filter((path) => path.endsWith("package.json") && path !== "package.json")
+    .slice(0, 50);
+  const packages: WorkspacePackageContext[] = [];
+  for (const path of packageFiles) {
+    const packageJson = await readPackageJson(join(repoRoot, dirname(path)));
+    if (Object.keys(packageJson.scripts).length === 0 && !packageJson.name) {
+      continue;
+    }
+    packages.push({
+      path: normalizePath(dirname(path)),
+      ...(packageJson.name ? { name: packageJson.name } : {}),
+      scripts: packageJson.scripts
+    });
+  }
+  return packages;
+}
+
+async function buildSymbolIndex(repoRoot: string, repoMap: RepoMap): Promise<SymbolIndexEntry[]> {
+  const files = repoMap.files
+    .map((file) => file.path)
+    .filter(isSourceFile)
+    .slice(0, 80);
+  const symbols: SymbolIndexEntry[] = [];
+  for (const file of files) {
+    const content = await readOptionalText(join(repoRoot, file));
+    if (!content) {
+      continue;
+    }
+    const lines = content.split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      const parsed = parseSymbolLine(line);
+      if (!parsed) {
+        continue;
+      }
+      symbols.push({
+        ...parsed,
+        path: file,
+        line: index + 1
+      });
+      if (symbols.length >= 500) {
+        return symbols;
+      }
+    }
+  }
+  return symbols;
+}
+
+function buildTestMap(
+  repoMap: RepoMap,
+  packageManager: "pnpm" | "npm" | "yarn" | "unknown",
+  packageScripts: Record<string, string>,
+  workspacePackages: WorkspacePackageContext[]
+): TestMapEntry[] {
+  const repoFiles = repoMap.files.map((file) => normalizePath(file.path));
+  const fileSet = new Set(repoFiles);
+  const defaultCommand = detectTestCommands(packageManager, packageScripts, workspacePackages)[0];
+  return repoFiles
+    .filter(isSourceFile)
+    .slice(0, 200)
+    .map((sourcePath) => ({
+      sourcePath,
+      testPaths: findLikelyTestsForSource(sourcePath, fileSet),
+      ...(defaultCommand ? { command: defaultCommand } : {})
+    }))
+    .filter((entry) => entry.testPaths.length > 0 || entry.command);
+}
+
+function parseSymbolLine(line: string): Omit<SymbolIndexEntry, "path" | "line"> | undefined {
+  const match =
+    /^\s*(export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/.exec(line) ??
+    /^\s*(export\s+)?class\s+([A-Za-z_$][\w$]*)/.exec(line) ??
+    /^\s*(export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(line) ??
+    /^\s*(export\s+)?interface\s+([A-Za-z_$][\w$]*)/.exec(line) ??
+    /^\s*(export\s+)?type\s+([A-Za-z_$][\w$]*)/.exec(line) ??
+    /^\s*export\s+\{\s*([^}]+)\s*\}/.exec(line);
+  if (!match?.[2] && !match?.[1]) {
+    return undefined;
+  }
+  if (line.trim().startsWith("export {")) {
+    const name = (match[1] ?? "")
+      .split(",")[0]
+      ?.trim()
+      .split(/\s+as\s+/i)[0]
+      ?.trim();
+    return name ? { name, kind: "export", exported: true } : undefined;
+  }
+  const kind = line.includes("function ")
+    ? "function"
+    : line.includes("class ")
+      ? "class"
+      : line.includes("interface ")
+        ? "interface"
+        : line.includes("type ")
+          ? "type"
+          : "const";
+  return {
+    name: match[2] ?? "",
+    kind,
+    exported: Boolean(match[1])
+  };
+}
+
+function findLikelyTestsForSource(sourcePath: string, fileSet: Set<string>): string[] {
+  const directory = dirname(sourcePath).replaceAll("\\", "/");
+  const stem = basename(sourcePath).replace(/\.(?:ts|tsx|js|jsx|mjs|cjs)$/, "");
+  const extensions = [".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx", ".test.js", ".spec.js"];
+  return extensions
+    .flatMap((extension) => [
+      `${directory}/${stem}${extension}`.replace(/^\.\//, ""),
+      `${directory}/__tests__/${stem}${extension}`.replace(/^\.\//, "")
+    ])
+    .filter(
+      (candidate, index, candidates) =>
+        fileSet.has(candidate) && candidates.indexOf(candidate) === index
+    )
+    .slice(0, 5);
+}
+
+function isSourceFile(path: string): boolean {
+  return /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(path) && !/\.d\.ts$/.test(path) && !isTestFile(path);
+}
+
+function isTestFile(path: string): boolean {
+  return /(?:^|[/\\])__tests__[/\\]|\.test\.(?:ts|tsx|js|jsx|mjs|cjs)$|\.spec\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(
+    path
+  );
 }
 
 async function readGitContext(cwd: string): Promise<GitContext> {
@@ -345,10 +552,14 @@ async function resolveMentions(repoRoot: string, prompt: string): Promise<Mentio
     const exists = await stat(absolutePath)
       .then((metadata) => metadata.isFile())
       .catch(() => false);
+    const snippet = exists
+      ? await readOptionalText(absolutePath).then((content) => content?.slice(0, 4000))
+      : undefined;
     mentions.push({
       mention,
       path: normalizePath(isAbsolute(mention) ? mention : relative(repoRoot, absolutePath)),
-      exists
+      exists,
+      ...(snippet ? { snippet } : {})
     });
   }
   return mentions;
@@ -359,15 +570,101 @@ async function readMemories(
   userMemoryRoot: string | undefined
 ): Promise<MemoryInjection> {
   const project = join(repoRoot, ".nexus", "learning", "project-memory.md");
-  const user = join(userMemoryRoot ?? join(homedir(), ".nexus", "memories"), "user-memory.md");
+  const userRoot = userMemoryRoot ?? join(homedir(), ".nexus", "memories");
+  const user = join(userRoot, "user-memory.md");
   return {
-    project: await readOptionalText(project).then((value) => value ?? ""),
-    user: await readOptionalText(user).then((value) => value ?? ""),
+    project:
+      (await safeReadTextFile({
+        path: project,
+        allowedRoot: join(repoRoot, ".nexus"),
+        workspaceRoot: repoRoot,
+        rootDescription: ".nexus learning storage"
+      })) ?? "",
+    user:
+      (await safeReadTextFile({
+        path: user,
+        allowedRoot: userRoot,
+        workspaceRoot: userRoot,
+        rootDescription: "user memory storage"
+      })) ?? "",
     paths: {
       project,
       user
     }
   };
+}
+
+async function detectPromptInjectionSources(input: {
+  repoRoot: string;
+  agentsMd?: string;
+  repoMap: RepoMap;
+  toolOutputs: ToolOutputSummary[];
+}): Promise<PromptInjectionFinding[]> {
+  const detector = new PromptInjectionDetector();
+  const findings: PromptInjectionFinding[] = [];
+  const seenSources = new Set<string>();
+
+  const scan = (source: string, content: string | undefined): void => {
+    if (!content?.trim() || seenSources.has(source)) {
+      return;
+    }
+    seenSources.add(source);
+    findings.push(...detector.detect(content.slice(0, 20000), source));
+  };
+
+  scan("file:AGENTS.md", input.agentsMd);
+
+  for (const file of promptInjectionRepoFiles(input.repoMap)) {
+    scan(`file:${file.path}`, await readOptionalText(join(input.repoRoot, file.path)));
+  }
+
+  scan(
+    "mcp:registry",
+    await safeReadTextFile({
+      path: join(input.repoRoot, ".nexus", "mcp.json"),
+      allowedRoot: join(input.repoRoot, ".nexus"),
+      workspaceRoot: input.repoRoot,
+      rootDescription: ".nexus MCP registry"
+    })
+  );
+
+  for (const output of input.toolOutputs) {
+    scan(`tool:${output.tool}`, `${output.status}\n${output.summary}`);
+  }
+
+  return dedupePromptInjectionFindings(findings);
+}
+
+function promptInjectionRepoFiles(repoMap: RepoMap): RepoMapFile[] {
+  return repoMap.files
+    .filter((file) => {
+      const name = basename(file.path).toLowerCase();
+      return (
+        name === "readme.md" ||
+        name === "readme" ||
+        name === "contributing.md" ||
+        name === "security.md" ||
+        name === "mcp.md" ||
+        file.path.toLowerCase().startsWith("docs/")
+      );
+    })
+    .slice(0, 40);
+}
+
+function dedupePromptInjectionFindings(
+  findings: PromptInjectionFinding[]
+): PromptInjectionFinding[] {
+  const seen = new Set<string>();
+  const deduped: PromptInjectionFinding[] = [];
+  for (const finding of findings) {
+    const key = `${finding.source ?? ""}|${finding.phrase}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(finding);
+  }
+  return deduped;
 }
 
 function buildCompactSummary(input: {
@@ -380,6 +677,7 @@ function buildCompactSummary(input: {
   memories: MemoryInjection;
   mentions: MentionResolution[];
   toolOutputs: ToolOutputSummary[];
+  sessionReplay?: SessionReplaySummary;
 }): string {
   const scriptNames = Object.keys(input.packageScripts);
   const changed = input.git.status
@@ -396,7 +694,8 @@ function buildCompactSummary(input: {
     `mentions=${input.mentions.filter((mention) => mention.exists).length}`,
     `projectMemory=${input.memories.project.trim().length > 0 ? "present" : "empty"}`,
     `userMemory=${input.memories.user.trim().length > 0 ? "present" : "empty"}`,
-    `toolOutputs=${input.toolOutputs.length}`
+    `toolOutputs=${input.toolOutputs.length}`,
+    `replayEvents=${input.sessionReplay?.eventCount ?? 0}`
   ].join(" | ");
 }
 
@@ -408,6 +707,7 @@ function estimateTokenBudget(input: {
   memories: MemoryInjection;
   toolOutputs: ToolOutputSummary[];
   compactSummary: string;
+  sessionReplay?: SessionReplaySummary;
 }): TokenBudgetEstimate {
   const chars =
     input.prompt.length +
@@ -417,6 +717,7 @@ function estimateTokenBudget(input: {
     input.memories.project.length +
     input.memories.user.length +
     input.compactSummary.length +
+    (input.sessionReplay?.transcript.reduce((sum, item) => sum + item.text.length, 0) ?? 0) +
     input.repoMap.files.reduce((sum, file) => sum + file.path.length + 12, 0) +
     input.toolOutputs.reduce(
       (sum, item) => sum + item.summary.length + item.tool.length + item.status.length,

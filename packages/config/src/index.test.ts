@@ -19,7 +19,15 @@ describe("config resolver", () => {
     const config = await resolveConfig({ cwd: tempDir });
     expect(config.modelProvider).toBe("deepseek");
     expect(config.model).toBe("deepseek-v4-flash");
-    expect(config.sandboxMode).toBe("workspace-write");
+    expect(config.sandboxMode).toBe("read-only");
+    expect(config.agent).toMatchObject({
+      maxModelTurns: 12,
+      maxToolCalls: 40,
+      maxRepeatedToolCalls: 2,
+      maxSubagents: 3,
+      criticMode: "after_mutation",
+      maxObservationChars: 12000
+    });
     expect(config.security.requireHardSandbox).toBe(false);
     expect(config.providers.deepseek).toMatchObject({
       apiKeyEnv: "DEEPSEEK_API_KEY",
@@ -162,12 +170,65 @@ describe("config resolver", () => {
     });
   });
 
+  it("parses agent orchestration controls", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
+    await mkdir(join(tempDir, ".nexus"));
+    await writeFile(
+      join(tempDir, ".nexus", "config.toml"),
+      [
+        "[agent]",
+        "max_model_turns = 24",
+        "max_tool_calls = 80",
+        "max_repeated_tool_calls = 3",
+        "max_subagents = 5",
+        'critic_mode = "always"',
+        "max_observation_chars = 4096"
+      ].join("\n")
+    );
+
+    const config = await resolveConfig({ cwd: tempDir });
+
+    expect(config.agent).toEqual({
+      maxModelTurns: 24,
+      maxToolCalls: 80,
+      maxRepeatedToolCalls: 3,
+      maxSubagents: 5,
+      criticMode: "always",
+      maxObservationChars: 4096
+    });
+  });
+
   it("supports the built-in fake profile for deterministic local tests", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
     const config = await resolveConfig({ cwd: tempDir, overrides: { profile: "fake" } });
 
     expect(config.modelProvider).toBe("fake");
     expect(config.model).toBe("fake-default");
+    expect(config.sandboxMode).toBe("workspace-write");
+    expect(config.approvalPolicy).toBe("never");
+  });
+
+  it("supports built-in safety profiles", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
+
+    await expect(
+      resolveConfig({ cwd: tempDir, overrides: { profile: "safe" } })
+    ).resolves.toMatchObject({
+      sandboxMode: "read-only",
+      approvalPolicy: "on-request"
+    });
+    await expect(
+      resolveConfig({ cwd: tempDir, overrides: { profile: "workspace" } })
+    ).resolves.toMatchObject({
+      sandboxMode: "workspace-write",
+      approvalPolicy: "on-request"
+    });
+    await expect(
+      resolveConfig({ cwd: tempDir, overrides: { profile: "automation" } })
+    ).resolves.toMatchObject({
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never"
+    });
   });
 
   it("supports the built-in DeepSeek profile", async () => {
@@ -210,5 +271,20 @@ describe("config resolver", () => {
     expect(config.retention.eventLogsDays).toBe(14);
     expect(config.telemetry.enterpriseAudit).toBe(true);
     expect(config.telemetry.contentTelemetry).toBe(false);
+  });
+
+  it("parses UTF-8 BOM config files written by Windows PowerShell", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
+    await mkdir(join(tempDir, ".nexus"));
+    await writeFile(
+      join(tempDir, ".nexus", "config.toml"),
+      '\uFEFFmodel_provider = "fake"\nmodel = "fake-default"\n',
+      "utf8"
+    );
+
+    const config = await resolveConfig({ cwd: tempDir });
+
+    expect(config.modelProvider).toBe("fake");
+    expect(config.model).toBe("fake-default");
   });
 });

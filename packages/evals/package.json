@@ -18,10 +18,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@nexus/config": "workspace:*",
+    "@nexus/context": "workspace:*",
     "@nexus/events": "workspace:*",
+    "@nexus/mcp": "workspace:*",
     "@nexus/provider-deepseek": "workspace:*",
     "@nexus/provider-openai": "workspace:*",
     "@nexus/security": "workspace:*",
-    "@nexus/shared": "workspace:*"
+    "@nexus/shared": "workspace:*",
+    "@nexus/storage": "workspace:*"
   }
 }

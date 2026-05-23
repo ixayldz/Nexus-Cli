@@ -117,12 +117,24 @@ importers:
       "@nexus/shared":
         specifier: workspace:*
         version: link:../shared
+      "@nexus/storage":
+        specifier: workspace:*
+        version: link:../storage
 
   packages/evals:
     dependencies:
+      "@nexus/config":
+        specifier: workspace:*
+        version: link:../config
+      "@nexus/context":
+        specifier: workspace:*
+        version: link:../context
       "@nexus/events":
         specifier: workspace:*
         version: link:../events
+      "@nexus/mcp":
+        specifier: workspace:*
+        version: link:../mcp
       "@nexus/provider-deepseek":
         specifier: workspace:*
         version: link:../providers/deepseek
@@ -135,6 +147,9 @@ importers:
       "@nexus/shared":
         specifier: workspace:*
         version: link:../shared
+      "@nexus/storage":
+        specifier: workspace:*
+        version: link:../storage
 
   packages/events:
     dependencies:
@@ -171,12 +186,18 @@ importers:
       "@nexus/shared":
         specifier: workspace:*
         version: link:../shared
+      "@nexus/storage":
+        specifier: workspace:*
+        version: link:../storage
 
   packages/mcp:
     dependencies:
       "@nexus/shared":
         specifier: workspace:*
         version: link:../shared
+      "@nexus/storage":
+        specifier: workspace:*
+        version: link:../storage
 
   packages/model-router:
     dependencies:
@@ -320,6 +341,9 @@ importers:
       "@nexus/shared":
         specifier: workspace:*
         version: link:../shared
+      "@nexus/storage":
+        specifier: workspace:*
+        version: link:../storage
       zod:
         specifier: ^4.1.12
         version: 4.4.3

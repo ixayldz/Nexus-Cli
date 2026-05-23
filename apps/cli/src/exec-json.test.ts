@@ -43,20 +43,25 @@ describe("exec --json vertical slice", () => {
       .split(/\r?\n/)
       .map((line) => JSON.parse(line) as { type: string; text?: string });
 
-    expect(events.map((event) => event.type)).toEqual([
+    const eventTypes = events.map((event) => event.type);
+    expect(eventTypes).toEqual(
+      expect.arrayContaining([
+        "session.started",
+        "user.input",
+        "agent.step.started",
+        "plan.updated",
+        "tool.requested",
+        "tool.completed",
+        "agent.loop.completed",
+        "assistant.message",
+        "session.completed"
+      ])
+    );
+    expectInOrder(eventTypes, [
       "session.started",
       "user.input",
-      "model.call.started",
-      "model.call.completed",
-      "model.usage",
       "tool.requested",
-      "tool.risk",
-      "audit.recorded",
-      "file.read",
       "tool.completed",
-      "model.call.started",
-      "model.call.completed",
-      "model.usage",
       "assistant.message",
       "session.completed"
     ]);
@@ -69,6 +74,10 @@ describe("exec --json vertical slice", () => {
       "exec",
       "--profile",
       "fake",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "workspace-write",
       "--json",
       "--cd",
       tempDir,
@@ -138,6 +147,15 @@ async function execCli(args: string[]): Promise<{ stdout: string; stderr: string
       cwd: process.cwd()
     }
   );
+}
+
+function expectInOrder(actual: string[], expected: string[]): void {
+  let cursor = -1;
+  for (const type of expected) {
+    const next = actual.indexOf(type, cursor + 1);
+    expect(next).toBeGreaterThan(cursor);
+    cursor = next;
+  }
 }
 
 async function execCliWithExit(

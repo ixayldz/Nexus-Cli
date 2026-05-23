@@ -10,6 +10,7 @@ import {
   runSecurityFixtureEval,
   securityFixtures
 } from "./index.js";
+import { runDogfoodEval } from "./dogfood.js";
 
 describe("eval and release hardening", () => {
   it("passes golden event sequences in order", () => {
@@ -85,6 +86,21 @@ describe("eval and release hardening", () => {
     await runBaselineEval({ cwd: process.cwd(), eventBus });
 
     expect(seen).toEqual(["eval.started", "eval.completed"]);
+  });
+
+  it("passes the non-live dogfood eval corpus", async () => {
+    const result = await runDogfoodEval({ cwd: process.cwd(), live: false });
+
+    expect(result.status).toBe("passed");
+    expect(result.results.map((item) => item.name)).toEqual(
+      expect.arrayContaining([
+        "read-only exec JSONL",
+        "explicit mutation",
+        "rollback on verify fail",
+        "context symlink refusal",
+        "MCP registry symlink refusal"
+      ])
+    );
   });
 });
 

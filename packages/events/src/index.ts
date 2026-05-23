@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   type EventId,
@@ -22,6 +22,11 @@ export type NexusEventType =
   | "model.stream.delta"
   | "model.stream.completed"
   | "model.usage"
+  | "agent.step.started"
+  | "agent.step.completed"
+  | "agent.step.blocked"
+  | "agent.loop.completed"
+  | "agent.critic.completed"
   | "plan.updated"
   | "sdlc.goal.updated"
   | "sdlc.definition_of_done.updated"
@@ -140,6 +145,10 @@ export class JsonlEventWriter {
   public async write(event: NexusEvent): Promise<void> {
     validateNexusEvent(event);
     await mkdir(dirname(this.filePath), { recursive: true });
+    const metadata = await lstat(this.filePath).catch(() => undefined);
+    if (metadata?.isSymbolicLink()) {
+      throw new Error("Event log path must not be a symlink.");
+    }
     await writeFile(this.filePath, `${safeJsonStringify(event)}\n`, { flag: "a" });
   }
 }
@@ -196,6 +205,11 @@ const nexusEventTypes = new Set<NexusEventType>([
   "model.stream.delta",
   "model.stream.completed",
   "model.usage",
+  "agent.step.started",
+  "agent.step.completed",
+  "agent.step.blocked",
+  "agent.loop.completed",
+  "agent.critic.completed",
   "plan.updated",
   "sdlc.goal.updated",
   "sdlc.definition_of_done.updated",

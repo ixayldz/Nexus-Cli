@@ -22,6 +22,7 @@
     "@nexus/context": "workspace:*",
     "@nexus/events": "workspace:*",
     "@nexus/security": "workspace:*",
-    "@nexus/shared": "workspace:*"
+    "@nexus/shared": "workspace:*",
+    "@nexus/storage": "workspace:*"
   }
 }

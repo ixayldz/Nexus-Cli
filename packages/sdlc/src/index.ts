@@ -100,15 +100,17 @@ export interface ReviewFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
   title: string;
   description: string;
-  file?: string;
-  line?: number;
-  recommendation?: string;
-  category?: "correctness" | "security" | "testing" | "maintainability" | "process";
+  file?: string | undefined;
+  line?: number | undefined;
+  recommendation?: string | undefined;
+  category?: "correctness" | "security" | "testing" | "maintainability" | "process" | undefined;
 }
 
 export interface ReviewResult {
   status: "passed" | "warnings" | "failed";
   findings: ReviewFinding[];
+  semanticFindings: ReviewFinding[];
+  coverageHints: string[];
   summary: string;
   filesReviewed: string[];
   createdAt: string;
@@ -394,16 +396,24 @@ export class SdlcManager {
     filesChanged: string[];
     diff?: string;
     modelFindings?: ReviewFinding[];
+    context?: CompiledContext;
   }): Promise<ReviewResult> {
     await this.startStage({
       sessionId: input.sessionId,
       eventBus: input.eventBus,
       stage: "review"
     });
-    const findings = sortFindings([
-      ...reviewDiff(input.filesChanged, input.diff),
-      ...(input.modelFindings ?? [])
-    ]);
+    const findings = sortFindings(
+      dedupeFindings([
+        ...reviewDiff(input.filesChanged, input.diff),
+        ...reviewContext(input.filesChanged, input.context),
+        ...(input.modelFindings ?? [])
+      ])
+    );
+    const semanticFindings = findings.filter((finding) =>
+      ["correctness", "security", "testing"].includes(finding.category ?? "")
+    );
+    const coverageHints = buildCoverageHints(input.filesChanged, input.context);
 
     const result: ReviewResult = {
       status: findings.some(
@@ -414,6 +424,8 @@ export class SdlcManager {
           ? "warnings"
           : "passed",
       findings,
+      semanticFindings,
+      coverageHints,
       summary:
         findings.length === 0
           ? `Reviewed ${input.filesChanged.length} changed file(s); no findings.`
@@ -440,6 +452,8 @@ export class SdlcManager {
         data: {
           status: result.status,
           findings: result.findings,
+          semanticFindings: result.semanticFindings,
+          coverageHints: result.coverageHints,
           summary: result.summary
         }
       })
@@ -777,12 +791,25 @@ function packageCommand(packageManager: string, script: string): string {
   return `npm run ${script}`;
 }
 
+interface DiffLine {
+  line?: number | undefined;
+  text: string;
+}
+
+interface DiffFileSummary {
+  path: string;
+  oldPath?: string;
+  addedLines: DiffLine[];
+  removedLines: DiffLine[];
+}
+
 function reviewDiff(filesChanged: string[], diff: string | undefined): ReviewFinding[] {
   const findings: ReviewFinding[] = [];
   const uniqueFiles = [...new Set(filesChanged)];
+  const diffFiles = parseDiffFiles(diff);
+  const reviewedFiles = [...new Set([...uniqueFiles, ...diffFiles.map((file) => file.path)])];
   if (uniqueFiles.length === 0 && !diff?.trim()) {
-    findings.push({
-      id: "finding_1",
+    addFinding(findings, {
       severity: "info",
       title: "No diff to review",
       description: "The current session has not recorded changed files or a diff.",
@@ -790,8 +817,7 @@ function reviewDiff(filesChanged: string[], diff: string | undefined): ReviewFin
     });
   }
   if (diff && diff.length > 5000) {
-    findings.push({
-      id: `finding_${findings.length + 1}`,
+    addFinding(findings, {
       severity: "medium",
       title: "Large diff",
       description: "The diff is large enough to deserve focused manual review.",
@@ -802,8 +828,7 @@ function reviewDiff(filesChanged: string[], diff: string | undefined): ReviewFin
     diff &&
     /\+.*(sk-[A-Za-z0-9_-]{8,}|api[_-]?key|Bearer\s+[A-Za-z0-9._~+/=-]{12,})/i.test(diff)
   ) {
-    findings.push({
-      id: `finding_${findings.length + 1}`,
+    addFinding(findings, {
       severity: "critical",
       title: "Potential secret introduced",
       description: "The diff appears to add a credential-like value or API key reference.",
@@ -812,21 +837,415 @@ function reviewDiff(filesChanged: string[], diff: string | undefined): ReviewFin
       category: "security"
     });
   }
-  const sourceTouched = uniqueFiles.some(
-    (file) => /\.(ts|tsx|js|jsx)$/.test(file) && !/\.test\./.test(file)
-  );
-  const testsTouched = uniqueFiles.some((file) => /\.test\.(ts|tsx|js|jsx)$/.test(file));
+  const manifestChanges = reviewedFiles.filter(isPackageManifest);
+  const lockfileTouched = reviewedFiles.some(isLockfile);
+  if (manifestChanges.length > 0 && !lockfileTouched) {
+    addFinding(findings, {
+      severity: "medium",
+      title: "Package manifest changed without lockfile update",
+      description:
+        "A package manifest changed, but the reviewed file set does not include the matching dependency lockfile.",
+      file: manifestChanges[0],
+      recommendation:
+        "Update and review the lockfile, or confirm the package.json change does not affect dependency resolution.",
+      category: "maintainability"
+    });
+  }
+
+  for (const file of diffFiles) {
+    const addedText = file.addedLines.map((line) => line.text).join("\n");
+    const firstAddedLine = file.addedLines.find((line) => line.line !== undefined)?.line;
+
+    if (isTestFile(file.path) && /\b(?:describe|it|test)\.only\s*\(/.test(addedText)) {
+      addFinding(findings, {
+        severity: "high",
+        title: "Focused test committed",
+        description: "The diff adds a focused test marker that can suppress the rest of the suite.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation: "Remove .only before shipping.",
+        category: "testing"
+      });
+    }
+
+    if (isTestFile(file.path) && /\b(?:describe|it|test)\.skip\s*\(/.test(addedText)) {
+      addFinding(findings, {
+        severity: "medium",
+        title: "Skipped test committed",
+        description: "The diff adds a skipped test, which may hide an unverified behavior change.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation: "Prefer fixing the test or documenting an explicit temporary skip owner.",
+        category: "testing"
+      });
+    }
+
+    if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(addedText)) {
+      addFinding(findings, {
+        severity: "high",
+        title: "Dynamic code execution introduced",
+        description:
+          "The diff adds eval-like dynamic execution, which is rarely safe in production.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation:
+          "Replace dynamic execution with explicit parsing or a constrained interpreter.",
+        category: "security"
+      });
+    }
+
+    if (
+      /from\s+["']node:child_process["']|from\s+["']child_process["']|require\(["'](?:node:)?child_process["']\)|\b(?:exec|execFile|execSync|spawn|spawnSync)\s*\(/.test(
+        addedText
+      )
+    ) {
+      addFinding(findings, {
+        severity: "high",
+        title: "Host process execution path introduced",
+        description:
+          "The diff adds child-process execution or command-spawning code that needs hard sandbox and policy enforcement.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation:
+          "Route command execution through the Tool Bus sandbox contract and add focused tests.",
+        category: "security"
+      });
+    }
+
+    if (/\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(addedText)) {
+      addFinding(findings, {
+        severity: "high",
+        title: "Pipe-to-shell installer introduced",
+        description: "The diff adds a network download piped directly into a shell.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation:
+          "Download, verify integrity, and execute through an auditable installer path.",
+        category: "security"
+      });
+    }
+
+    if (
+      /\b(?:localStorage|sessionStorage)\.(?:setItem|getItem)\s*\(\s*["'][^"']*(?:token|secret|key|credential)/i.test(
+        addedText
+      )
+    ) {
+      addFinding(findings, {
+        severity: "medium",
+        title: "Credential-like browser storage usage",
+        description:
+          "The diff stores or reads a token-like value through browser storage, which is exposed to injected scripts.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation: "Use an httpOnly cookie or a shorter-lived in-memory credential strategy.",
+        category: "security"
+      });
+    }
+
+    if (
+      /Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*["']|origin\s*:\s*["']\*["']/.test(addedText)
+    ) {
+      addFinding(findings, {
+        severity: "medium",
+        title: "Broad CORS origin introduced",
+        description: "The diff appears to allow all cross-origin callers.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation: "Restrict origins to the smallest production allowlist.",
+        category: "security"
+      });
+    }
+
+    if (/catch\s*(?:\([^)]*\))?\s*\{\s*\}/.test(addedText)) {
+      addFinding(findings, {
+        severity: "medium",
+        title: "Empty catch block introduced",
+        description: "The diff adds an empty catch block that can swallow production failures.",
+        file: file.path,
+        line: firstAddedLine,
+        recommendation: "Log, rethrow, or convert the error into an explicit handled result.",
+        category: "correctness"
+      });
+    }
+  }
+
+  const sourceTouched = reviewedFiles.some(isSourceFile);
+  const testsTouched = reviewedFiles.some(isTestFile);
   if (sourceTouched && !testsTouched) {
-    findings.push({
-      id: `finding_${findings.length + 1}`,
-      severity: "low",
+    addFinding(findings, {
+      severity: "medium",
       title: "No test file changed",
       description: "Source files changed without a matching test update in the recorded file set.",
       recommendation: "Confirm existing tests cover the behavior or add focused coverage.",
       category: "testing"
     });
   }
+
+  const publicApiChanges = diffFiles.filter(
+    (file) =>
+      isSourceFile(file.path) &&
+      file.addedLines.some((line) =>
+        /\bexport\s+(?:async\s+)?(?:class|function|const|let|var|interface|type|enum)\b/.test(
+          line.text
+        )
+      )
+  );
+  for (const file of publicApiChanges) {
+    if (testsTouched && !hasMatchingTestChange(file.path, reviewedFiles)) {
+      addFinding(findings, {
+        severity: "medium",
+        title: "Public API changed without focused test",
+        description:
+          "An exported source symbol changed, but no nearby or same-stem test file changed in the reviewed set.",
+        file: file.path,
+        line: file.addedLines.find((line) => line.line !== undefined)?.line,
+        recommendation: "Add or update a focused test for the exported behavior.",
+        category: "testing"
+      });
+    }
+  }
+
+  const removedTestFiles = diffFiles.filter(
+    (file) => isTestFile(file.path) && file.removedLines.length > 0 && file.addedLines.length === 0
+  );
+  for (const file of removedTestFiles) {
+    addFinding(findings, {
+      severity: "high",
+      title: "Test coverage removed",
+      description: "A test file appears to remove coverage without adding replacement lines.",
+      file: file.path,
+      recommendation:
+        "Confirm replacement coverage exists or keep the deleted test behavior covered.",
+      category: "testing"
+    });
+  }
+
   return findings;
+}
+
+function reviewContext(
+  filesChanged: string[],
+  context: CompiledContext | undefined
+): ReviewFinding[] {
+  if (!context) {
+    return [];
+  }
+  const findings: ReviewFinding[] = [];
+  const changed = new Set(filesChanged.map(normalizeDiffPath));
+  const testsChanged = filesChanged.some(isTestFile);
+  for (const file of changed) {
+    if (!isSourceFile(file)) {
+      continue;
+    }
+    const testMap = context.repository.testMap.find((entry) => entry.sourcePath === file);
+    const exportedSymbols = context.repository.symbols.filter(
+      (symbol) => symbol.path === file && symbol.exported
+    );
+    if (exportedSymbols.length > 0 && !testsChanged && (testMap?.testPaths.length ?? 0) === 0) {
+      addFinding(findings, {
+        severity: "medium",
+        title: "Exported source lacks mapped test coverage",
+        description:
+          "The changed file exports public symbols, but Nexus could not map it to a nearby focused test.",
+        file,
+        recommendation: "Add or update a focused test near the changed source before shipping.",
+        category: "testing"
+      });
+    }
+  }
+  return findings;
+}
+
+function buildCoverageHints(
+  filesChanged: string[],
+  context: CompiledContext | undefined
+): string[] {
+  if (!context) {
+    return [];
+  }
+  const hints = new Set<string>();
+  for (const file of filesChanged.map(normalizeDiffPath).filter(isSourceFile)) {
+    const entry = context.repository.testMap.find((candidate) => candidate.sourcePath === file);
+    if (entry?.testPaths.length) {
+      hints.add(`${file}: run or update ${entry.testPaths.join(", ")}`);
+    } else if (entry?.command) {
+      hints.add(`${file}: verify with ${entry.command}`);
+    }
+  }
+  return [...hints].slice(0, 20);
+}
+
+function addFinding(findings: ReviewFinding[], finding: Omit<ReviewFinding, "id">): void {
+  findings.push({ ...finding, id: `finding_${findings.length + 1}` });
+}
+
+function parseDiffFiles(diff: string | undefined): DiffFileSummary[] {
+  if (!diff?.trim()) {
+    return [];
+  }
+
+  const files: DiffFileSummary[] = [];
+  let current: DiffFileSummary | undefined;
+  let oldLineNumber: number | undefined;
+  let newLineNumber: number | undefined;
+
+  for (const rawLine of diff.split(/\r?\n/)) {
+    const gitHeader = /^diff --git a\/(.+) b\/(.+)$/.exec(rawLine);
+    if (gitHeader) {
+      current = {
+        oldPath: normalizeDiffPath(gitHeader[1] ?? ""),
+        path: normalizeDiffPath(gitHeader[2] ?? ""),
+        addedLines: [],
+        removedLines: []
+      };
+      files.push(current);
+      oldLineNumber = undefined;
+      newLineNumber = undefined;
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (rawLine.startsWith("+++ ")) {
+      const nextPath = normalizeDiffPath(rawLine.slice(4));
+      if (nextPath !== "/dev/null") {
+        current.path = nextPath;
+      }
+      continue;
+    }
+
+    if (rawLine.startsWith("--- ")) {
+      const previousPath = normalizeDiffPath(rawLine.slice(4));
+      if (previousPath !== "/dev/null") {
+        current.oldPath = previousPath;
+      }
+      continue;
+    }
+
+    const hunkHeader = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(rawLine);
+    if (hunkHeader) {
+      oldLineNumber = Number(hunkHeader[1]);
+      newLineNumber = Number(hunkHeader[2]);
+      continue;
+    }
+
+    if (rawLine.startsWith("+")) {
+      current.addedLines.push({ line: newLineNumber, text: rawLine.slice(1) });
+      if (newLineNumber !== undefined) {
+        newLineNumber += 1;
+      }
+      continue;
+    }
+
+    if (rawLine.startsWith("-")) {
+      current.removedLines.push({ line: oldLineNumber, text: rawLine.slice(1) });
+      if (oldLineNumber !== undefined) {
+        oldLineNumber += 1;
+      }
+      continue;
+    }
+
+    if (rawLine.startsWith(" ") || rawLine === "") {
+      if (oldLineNumber !== undefined) {
+        oldLineNumber += 1;
+      }
+      if (newLineNumber !== undefined) {
+        newLineNumber += 1;
+      }
+    }
+  }
+
+  return files.filter((file) => file.path && file.path !== "/dev/null");
+}
+
+function normalizeDiffPath(path: string): string {
+  const normalized = path.trim().split("\t")[0]?.replace(/^"|"$/g, "") ?? "";
+  if (normalized === "/dev/null") {
+    return normalized;
+  }
+  return normalized.replace(/^[ab]\//, "").replace(/\\/g, "/");
+}
+
+function isSourceFile(file: string): boolean {
+  const normalized = normalizeDiffPath(file);
+  return (
+    /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(normalized) &&
+    !/\.d\.ts$/.test(normalized) &&
+    !isTestFile(normalized)
+  );
+}
+
+function isTestFile(file: string): boolean {
+  const normalized = normalizeDiffPath(file);
+  return /(?:^|\/)__tests__\/|\.test\.(?:ts|tsx|js|jsx|mjs|cjs)$|\.spec\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(
+    normalized
+  );
+}
+
+function isPackageManifest(file: string): boolean {
+  return basename(file) === "package.json";
+}
+
+function isLockfile(file: string): boolean {
+  const name = basename(file);
+  return (
+    name === "pnpm-lock.yaml" ||
+    name === "package-lock.json" ||
+    name === "yarn.lock" ||
+    name === "bun.lockb" ||
+    name === "bun.lock"
+  );
+}
+
+function basename(file: string): string {
+  return normalizeDiffPath(file).split("/").at(-1) ?? file;
+}
+
+function hasMatchingTestChange(sourceFile: string, reviewedFiles: string[]): boolean {
+  const sourceDir = dirname(sourceFile);
+  const stem = fileStem(sourceFile);
+  return reviewedFiles.some((file) => {
+    if (!isTestFile(file)) {
+      return false;
+    }
+    const testDir = dirname(file);
+    return fileStem(file) === stem || testDir === sourceDir || testDir.startsWith(`${sourceDir}/`);
+  });
+}
+
+function dirname(file: string): string {
+  const normalized = normalizeDiffPath(file);
+  const parts = normalized.split("/");
+  parts.pop();
+  return parts.join("/");
+}
+
+function fileStem(file: string): string {
+  return basename(file)
+    .replace(/\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/, "")
+    .replace(/\.(?:ts|tsx|js|jsx|mjs|cjs)$/, "");
+}
+
+function dedupeFindings(findings: ReviewFinding[]): ReviewFinding[] {
+  const seen = new Set<string>();
+  const deduped: ReviewFinding[] = [];
+  for (const finding of findings) {
+    const key = [
+      finding.severity,
+      finding.title.toLowerCase(),
+      finding.file ?? "",
+      finding.line ?? "",
+      finding.category ?? ""
+    ].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(finding);
+  }
+  return deduped;
 }
 
 function sortFindings(findings: ReviewFinding[]): ReviewFinding[] {

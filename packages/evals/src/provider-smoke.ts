@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DeepSeekChatProvider } from "@nexus/provider-deepseek";
 import { OpenAiResponsesProvider } from "@nexus/provider-openai";
 import { type SessionId, nowIso, safeJsonStringify } from "@nexus/shared";
+import { safeAtomicWriteText } from "@nexus/storage";
 
 type ProviderId = "deepseek" | "openai";
+type ProviderSelection = ProviderId | "all";
 
 interface ProviderSmokeResult {
   provider: ProviderId;
@@ -18,38 +19,46 @@ interface ProviderSmokeResult {
   createdAt: string;
 }
 
-const provider = readProvider(process.argv.slice(2));
-const model = readModel(process.argv.slice(2), provider);
-const result = await runProviderSmoke(provider, model);
-await writeProviderSmokeResult(process.cwd(), result);
+interface ProviderSmokeOptions {
+  provider: ProviderSelection;
+  model?: string;
+  requireLive: boolean;
+}
 
-if (result.status === "failed") {
-  process.stderr.write(`${result.summary}\n`);
+const options = readOptions(process.argv.slice(2));
+const results = await Promise.all(
+  expandProviders(options.provider).map((provider) =>
+    runProviderSmoke(provider, options.model ?? defaultModel(provider), options.requireLive)
+  )
+);
+await Promise.all(results.map((result) => writeProviderSmokeResult(process.cwd(), result)));
+
+for (const result of results) {
+  const prefix = `${result.status}: ${result.summary}`;
+  if (result.status === "failed") {
+    process.stderr.write(`${prefix}\n`);
+  } else {
+    process.stdout.write(`${prefix}\n`);
+  }
+}
+
+if (results.some((result) => result.status === "failed")) {
   process.exitCode = 1;
-} else {
-  process.stdout.write(`${result.status}: ${result.summary}\n`);
 }
 
 async function runProviderSmoke(
   providerId: ProviderId,
-  model: string
+  model: string,
+  requireLive: boolean
 ): Promise<ProviderSmokeResult> {
   const createdAt = nowIso();
-  if (providerId === "deepseek" && !process.env.DEEPSEEK_API_KEY) {
+  const keyName = providerId === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
+  if (!process.env[keyName]) {
     return {
       provider: providerId,
       model,
-      status: "skipped",
-      summary: "DEEPSEEK_API_KEY is not set.",
-      createdAt
-    };
-  }
-  if (providerId === "openai" && !process.env.OPENAI_API_KEY) {
-    return {
-      provider: providerId,
-      model,
-      status: "skipped",
-      summary: "OPENAI_API_KEY is not set.",
+      status: requireLive ? "failed" : "skipped",
+      summary: `${keyName} is not set.`,
       createdAt
     };
   }
@@ -101,27 +110,44 @@ async function runProviderSmoke(
 
 async function writeProviderSmokeResult(cwd: string, result: ProviderSmokeResult): Promise<void> {
   const directory = join(cwd, ".nexus", "provider-smoke", result.provider);
-  await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, "latest.json"), `${safeJsonStringify(result)}\n`, "utf8");
+  await safeAtomicWriteText({
+    path: join(directory, "latest.json"),
+    allowedRoot: join(cwd, ".nexus"),
+    workspaceRoot: cwd,
+    content: `${safeJsonStringify(result)}\n`,
+    rootDescription: ".nexus provider smoke storage"
+  });
 }
 
-function readProvider(args: string[]): ProviderId {
-  const index = args.indexOf("--provider");
-  const value = index >= 0 ? args[index + 1] : undefined;
+function readOptions(args: string[]): ProviderSmokeOptions {
+  const model = readFlag(args, "--model");
+  return {
+    provider: readProvider(args),
+    ...(model ? { model } : {}),
+    requireLive: args.includes("--require-live")
+  };
+}
+
+function readProvider(args: string[]): ProviderSelection {
+  const value = readFlag(args, "--provider");
   if (!value) {
     return "deepseek";
   }
-  if (value === "deepseek" || value === "openai") {
+  if (value === "deepseek" || value === "openai" || value === "all") {
     return value;
   }
   throw new Error(`Unsupported provider '${value}'.`);
 }
 
-function readModel(args: string[], provider: ProviderId): string {
-  const index = args.indexOf("--model");
-  const value = index >= 0 ? args[index + 1] : undefined;
-  if (value) {
-    return value;
-  }
+function readFlag(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+function expandProviders(provider: ProviderSelection): ProviderId[] {
+  return provider === "all" ? ["deepseek", "openai"] : [provider];
+}
+
+function defaultModel(provider: ProviderId): string {
   return provider === "deepseek" ? "deepseek-v4-flash" : "gpt-5.4-mini";
 }

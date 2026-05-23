@@ -67,4 +67,36 @@ describe("events", () => {
       })
     ).toThrow("not registered");
   });
+
+  it("accepts agent orchestration event types", () => {
+    const sessionId = "nx_test" as SessionId;
+
+    expect(() =>
+      validateNexusEvent(
+        createEvent({
+          sessionId,
+          type: "agent.step.started",
+          data: { phase: "execute", label: "Run search.files" }
+        })
+      )
+    ).not.toThrow();
+    expect(() =>
+      validateNexusEvent(
+        createEvent({
+          sessionId,
+          type: "agent.critic.completed",
+          data: { decision: "finalize", summary: "ok" }
+        })
+      )
+    ).not.toThrow();
+    expect(() =>
+      validateNexusEvent(
+        createEvent({
+          sessionId,
+          type: "agent.loop.completed",
+          data: { status: "completed", modelTurns: 2, toolCalls: 1 }
+        })
+      )
+    ).not.toThrow();
+  });
 });

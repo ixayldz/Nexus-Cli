@@ -1,18 +1,31 @@
+import { readFile } from "node:fs/promises";
 import { type ResolvedConfig } from "@nexus/config";
-import { ContextCompiler } from "@nexus/context";
+import { ContextCompiler, type SessionReplaySummary } from "@nexus/context";
 import {
   type EventBus,
   InMemoryEventBus,
   JsonlEventWriter,
+  type NexusEvent,
   type Unsubscribe,
-  createEvent
+  createEvent,
+  readJsonlEvents
 } from "@nexus/events";
 import { HookRunner } from "@nexus/hooks";
 import { McpRegistry } from "@nexus/mcp";
 import { type DefaultModelRouter } from "@nexus/model-router";
 import { ApprovalCoordinator, type SecurityRuntime } from "@nexus/security";
 import { SandboxManager } from "@nexus/sandbox";
-import { SdlcManager } from "@nexus/sdlc";
+import {
+  type Plan,
+  type ReviewResult,
+  SdlcManager,
+  type SdlcStage,
+  type SdlcStageRun,
+  type SdlcState,
+  type ShipArtifact,
+  type VerificationReport,
+  createInitialSdlcState
+} from "@nexus/sdlc";
 import {
   type ApprovalRequestId,
   type SessionId,
@@ -177,6 +190,10 @@ export class NexusRuntime {
 
     const threadId = createId("thread") as unknown as ThreadId;
     const storage = await createSessionStorage({ cwd: input.cwd, sessionId: manifest.sessionId });
+    const replayEvents = await readJsonlEvents(storage.eventLogPath).catch(() => []);
+    const replay = buildSessionReplaySummary(manifest, replayEvents);
+    this.services.context = new ContextCompiler({ sessionReplay: replay });
+    this.services.sdlc = await restoreSdlcManagerFromReplay(manifest, storage, replayEvents);
     this.attachEventWriter(storage.eventLogPath);
     const session: NexusSession = {
       id: manifest.sessionId,
@@ -192,7 +209,16 @@ export class NexusRuntime {
     this.session = session;
     this.storage = storage;
     await storage.writeManifest(
-      createManifest(session, storage, undefined, manifest.parentSessionId, "running")
+      mergeManifest(
+        manifest,
+        createManifest(session, storage, undefined, manifest.parentSessionId, "running", {
+          replayedAt: nowIso(),
+          replayedEventCount: replay.eventCount,
+          transcriptMessageCount: replay.transcript.length,
+          sdlcStageCount: replay.sdlcStages.length,
+          learningCandidateCount: replay.learningCandidateCount
+        })
+      )
     );
     await this.eventBus.publish(
       createEvent({
@@ -203,7 +229,11 @@ export class NexusRuntime {
           cwd: session.cwd,
           mode: session.mode,
           eventLogPath: session.eventLogPath,
-          resumed: true
+          resumed: true,
+          replayedEventCount: replay.eventCount,
+          transcriptMessageCount: replay.transcript.length,
+          sdlcStageCount: replay.sdlcStages.length,
+          learningCandidateCount: replay.learningCandidateCount
         }
       })
     );
@@ -323,7 +353,8 @@ function createManifest(
   storage: SessionStorage,
   result?: TurnResult,
   parentSessionId?: SessionId,
-  status: "running" | "completed" | "stopped" = result ? "completed" : "running"
+  status: "running" | "completed" | "stopped" = result ? "completed" : "running",
+  resumeReplay?: NonNullable<SessionManifest["resumeReplay"]>
 ): SessionManifest {
   const parent = parentSessionId ?? session.parentSessionId;
   return {
@@ -342,6 +373,7 @@ function createManifest(
     filesChanged: result?.filesChanged ?? [],
     commandsRun: result?.commandsRun ?? [],
     artifacts: storage.artifacts,
+    ...(resumeReplay ? { resumeReplay } : {}),
     ...(result?.exitCodeHint === 6 ? { verificationStatus: "failed" as const } : {})
   };
 }
@@ -377,7 +409,293 @@ function mergeManifest(
   if (learningCandidateCount !== undefined) {
     merged.learningCandidateCount = learningCandidateCount;
   }
+  const resumeReplay = next.resumeReplay ?? previous.resumeReplay;
+  if (resumeReplay) {
+    merged.resumeReplay = resumeReplay;
+  }
   return merged;
+}
+
+function buildSessionReplaySummary(
+  manifest: SessionManifest,
+  events: NexusEvent[]
+): SessionReplaySummary {
+  const filesChanged = new Set(manifest.filesChanged ?? []);
+  const commandsRun = new Set(manifest.commandsRun ?? []);
+  const transcript: SessionReplaySummary["transcript"] = [];
+  const sdlcStages: string[] = [];
+  let learningCandidateCount = manifest.learningCandidateCount ?? 0;
+
+  for (const event of events) {
+    if (event.type === "user.input" || event.type === "assistant.message") {
+      const text = readString(event.text);
+      if (text) {
+        transcript.push({
+          role: event.type === "user.input" ? "user" : "assistant",
+          text,
+          timestamp: event.timestamp
+        });
+      }
+    }
+    for (const file of readStringArray(event.filesChanged)) {
+      filesChanged.add(file);
+    }
+    for (const file of readStringArray(event.files)) {
+      filesChanged.add(file);
+    }
+    const changedPath = readString(event.path);
+    if (event.type === "file.changed" && changedPath) {
+      filesChanged.add(changedPath);
+    }
+    for (const command of readStringArray(event.commandsRun)) {
+      commandsRun.add(command);
+    }
+    const command = readString(event.command);
+    if (command && (event.type === "shell.completed" || event.type === "verification.completed")) {
+      commandsRun.add(command);
+    }
+    if (event.type.startsWith("sdlc.stage.")) {
+      const stage = readString(event.stage);
+      if (stage) {
+        sdlcStages.push(`${stage}:${event.type.replace("sdlc.stage.", "")}`);
+      }
+    }
+    if (event.type === "learning.candidate.created") {
+      learningCandidateCount += 1;
+    }
+  }
+
+  return {
+    resumed: true,
+    eventCount: events.length,
+    transcript: transcript.slice(-40),
+    filesChanged: [...filesChanged].sort(),
+    commandsRun: [...commandsRun].sort(),
+    sdlcStages: manifest.sdlcStages ?? sdlcStages,
+    learningCandidateCount
+  };
+}
+
+async function restoreSdlcManagerFromReplay(
+  manifest: SessionManifest,
+  storage: SessionStorage,
+  events: NexusEvent[]
+): Promise<SdlcManager> {
+  const state = replaySdlcEvents(manifest, events);
+  const plan = await readJsonArtifact<Plan>(storage.artifacts.planPath);
+  const verification = await readJsonArtifact<VerificationReport>(
+    storage.artifacts.verificationPath
+  );
+  const review = await readJsonArtifact<ReviewResult>(storage.artifacts.reviewPath);
+  const ship = await readJsonArtifact<ShipArtifact>(storage.artifacts.shipPath);
+
+  return new SdlcManager({
+    ...state,
+    ...(plan ? { plan } : {}),
+    ...(verification ? { verification } : {}),
+    ...(review ? { review } : {}),
+    ...(ship ? { ship } : {})
+  });
+}
+
+function replaySdlcEvents(manifest: SessionManifest, events: NexusEvent[]): SdlcState {
+  let state: SdlcState = createInitialSdlcState();
+
+  for (const event of events) {
+    if (event.type === "sdlc.goal.updated") {
+      const goal = readString(event.goal);
+      if (goal) {
+        state = {
+          ...state,
+          currentStage: "plan",
+          goal: {
+            text: goal,
+            createdAt: event.timestamp
+          }
+        };
+      }
+      continue;
+    }
+
+    if (event.type === "sdlc.definition_of_done.updated") {
+      const items = Array.isArray(event.items) ? event.items : [];
+      state = {
+        ...state,
+        definitionOfDone: items as SdlcState["definitionOfDone"]
+      };
+      continue;
+    }
+
+    if (event.type === "plan.updated" && isRecord(event.plan)) {
+      state = {
+        ...state,
+        currentStage: "plan",
+        plan: event.plan as unknown as Plan
+      };
+      continue;
+    }
+
+    if (event.type === "sdlc.stage.started" && isSdlcStage(event.stage)) {
+      const run: SdlcStageRun = {
+        id: event.id,
+        stage: event.stage,
+        status: "running",
+        startedAt: event.timestamp
+      };
+      state = {
+        ...state,
+        currentStage: event.stage,
+        stageRuns: [...state.stageRuns, run]
+      };
+      continue;
+    }
+
+    if (event.type === "sdlc.stage.completed" && isSdlcStage(event.stage)) {
+      state = {
+        ...state,
+        completedStages: markCompletedReplay(state.completedStages, event.stage),
+        stageRuns: updateLatestStageRunReplay(state.stageRuns, event.stage, {
+          status: "completed",
+          completedAt: event.timestamp
+        })
+      };
+      continue;
+    }
+
+    if (event.type === "sdlc.stage.blocked" && isSdlcStage(event.stage)) {
+      const reason = readString(event.reason) ?? "Resumed blocked stage.";
+      state = {
+        ...state,
+        blockedReason: reason,
+        stageRuns: updateLatestStageRunReplay(state.stageRuns, event.stage, {
+          status: "blocked",
+          completedAt: event.timestamp,
+          blockedReason: reason
+        })
+      };
+      continue;
+    }
+
+    if (event.type === "verification.completed") {
+      const status = normalizeVerificationStatus(event.status);
+      state = {
+        ...state,
+        currentStage: "verify",
+        verification: {
+          status,
+          command: readString(event.command) ?? "",
+          summary: readString(event.summary) ?? "Restored from session event log.",
+          required: true,
+          startedAt: event.timestamp,
+          completedAt: event.timestamp,
+          evidenceEventIds: []
+        }
+      };
+      continue;
+    }
+
+    if (event.type === "review.completed") {
+      state = {
+        ...state,
+        currentStage: "review",
+        review: {
+          status: normalizeReviewStatus(event.status),
+          findings: Array.isArray(event.findings)
+            ? (event.findings as ReviewResult["findings"])
+            : [],
+          semanticFindings: Array.isArray(event.semanticFindings)
+            ? (event.semanticFindings as ReviewResult["semanticFindings"])
+            : [],
+          coverageHints: Array.isArray(event.coverageHints)
+            ? (event.coverageHints.filter((item) => typeof item === "string") as string[])
+            : [],
+          summary: readString(event.summary) ?? "Restored from session event log.",
+          filesReviewed: manifest.filesChanged ?? [],
+          createdAt: event.timestamp
+        }
+      };
+      continue;
+    }
+  }
+
+  return state;
+}
+
+async function readJsonArtifact<T>(path: string): Promise<T | undefined> {
+  const content = await readFile(path, "utf8").catch(() => undefined);
+  if (!content) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(content) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function updateLatestStageRunReplay(
+  runs: SdlcStageRun[],
+  stage: SdlcStage,
+  patch: Pick<SdlcStageRun, "status"> & Partial<Pick<SdlcStageRun, "completedAt" | "blockedReason">>
+): SdlcStageRun[] {
+  let index = -1;
+  for (let runIndex = runs.length - 1; runIndex >= 0; runIndex -= 1) {
+    const run = runs[runIndex];
+    if (run?.stage === stage && run.status === "running") {
+      index = runIndex;
+      break;
+    }
+  }
+  if (index < 0) {
+    const synthetic: SdlcStageRun = {
+      id: createId("stage"),
+      stage,
+      status: patch.status,
+      startedAt: patch.completedAt ?? nowIso(),
+      ...(patch.completedAt ? { completedAt: patch.completedAt } : {}),
+      ...(patch.blockedReason ? { blockedReason: patch.blockedReason } : {})
+    };
+    return [...runs, synthetic];
+  }
+  return runs.map((run, runIndex) => (runIndex === index ? { ...run, ...patch } : run));
+}
+
+function markCompletedReplay(completed: SdlcStage[], stage: SdlcStage): SdlcStage[] {
+  return completed.includes(stage) ? completed : [...completed, stage];
+}
+
+function isSdlcStage(value: unknown): value is SdlcStage {
+  return (
+    value === "discover" ||
+    value === "plan" ||
+    value === "implement" ||
+    value === "verify" ||
+    value === "review" ||
+    value === "ship" ||
+    value === "learn"
+  );
+}
+
+function normalizeVerificationStatus(value: unknown): VerificationReport["status"] {
+  return value === "passed" || value === "failed" || value === "skipped" ? value : "skipped";
+}
+
+function normalizeReviewStatus(value: unknown): ReviewResult["status"] {
+  return value === "passed" || value === "warnings" || value === "failed" ? value : "warnings";
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function createDefaultRuntimeServices(input: {

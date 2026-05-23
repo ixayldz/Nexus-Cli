@@ -1,4 +1,4 @@
-import { readFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -98,7 +98,7 @@ describe("LearningPlane", () => {
         commandsRun: ["pnpm test"],
         filesChanged: ["src/feature.ts"]
       });
-      expect(plane.getState().effectiveMode).toBe("suggest");
+      expect(plane.getState().effectiveMode).toBe("active");
       expect(candidates.some((candidate) => candidate.scope === "user")).toBe(true);
 
       const entries = await plane.acceptPending({
@@ -109,14 +109,63 @@ describe("LearningPlane", () => {
       });
       const userMemory = await plane.readUserMemory();
       const workflows = await readFile(join(cwd, ".nexus", "learning", "workflows.json"), "utf8");
+      const evals = await readFile(join(cwd, ".nexus", "learning", "evals.json"), "utf8");
+      const scorecard = await readFile(join(cwd, ".nexus", "learning", "scorecard.json"), "utf8");
 
       expect(entries.length).toBe(candidates.length);
       expect(userMemory).toContain("Prefer pnpm commands");
       expect(workflows).toContain("pnpm test");
+      expect(evals).toContain("src/feature.ts");
+      expect(scorecard).toContain("sourceCandidateId");
       expect(await plane.listMemories(cwd)).not.toHaveLength(0);
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(userMemoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-writes safe high-confidence project candidates in active mode when confirmation is disabled", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexus-learning-"));
+    try {
+      const context = await new ContextCompiler().compile({
+        cwd,
+        config: { ...defaultConfig, sources: [] }
+      });
+      const events: string[] = [];
+      const eventBus = new InMemoryEventBus();
+      eventBus.subscribe((event) => {
+        events.push(event.type);
+      });
+      const plane = new LearningPlane({
+        mode: "active",
+        requireUserConfirmation: false
+      });
+
+      const candidates = await plane.generateCandidates({
+        sessionId: "nx_test" as SessionId,
+        eventBus,
+        context,
+        commandsRun: [],
+        filesChanged: [],
+        semanticCandidates: [
+          {
+            scope: "project",
+            type: "workflow",
+            text: "Run pnpm test:coverage after changing SDLC release gates.",
+            confidence: 0.92
+          }
+        ]
+      });
+      const memory = await plane.readProjectMemory(cwd);
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.requiresApproval).toBe(false);
+      expect(plane.getState().pendingCandidates).toHaveLength(0);
+      expect(memory).toContain("Run pnpm test:coverage");
+      expect(events).toContain("learning.candidate.accepted");
+      expect(events).toContain("memory.written");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
     }
   });
 
@@ -199,6 +248,78 @@ describe("LearningPlane", () => {
       await expect(new LearningPlane({ mode: "suggest" }).readProjectMemory(cwd)).rejects.toThrow(
         ".nexus learning storage must not be a symlink"
       );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinked project memory files before reading them", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexus-learning-"));
+    const external = await mkdtemp(join(tmpdir(), "nexus-learning-external-"));
+    try {
+      await mkdir(join(cwd, ".nexus", "learning"), { recursive: true });
+      const externalFile = join(external, "project-memory.md");
+      await writeFile(externalFile, "# External\n", "utf8");
+      try {
+        await symlink(externalFile, join(cwd, ".nexus", "learning", "project-memory.md"), "file");
+      } catch {
+        return;
+      }
+
+      await expect(new LearningPlane({ mode: "suggest" }).readProjectMemory(cwd)).rejects.toThrow(
+        "Read target must not be a symlink"
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinked structured learning stores before merging JSON", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexus-learning-"));
+    const external = await mkdtemp(join(tmpdir(), "nexus-learning-external-"));
+    try {
+      await mkdir(join(cwd, ".nexus", "learning"), { recursive: true });
+      const externalFile = join(external, "workflows.json");
+      await writeFile(externalFile, "[]\n", "utf8");
+      try {
+        await symlink(externalFile, join(cwd, ".nexus", "learning", "workflows.json"), "file");
+      } catch {
+        return;
+      }
+
+      const context = await new ContextCompiler().compile({
+        cwd,
+        config: { ...defaultConfig, sources: [] }
+      });
+      const plane = new LearningPlane({ mode: "suggest" });
+      const eventBus = new InMemoryEventBus();
+      const candidates = await plane.generateCandidates({
+        sessionId: "nx_test" as SessionId,
+        eventBus,
+        context,
+        commandsRun: [],
+        filesChanged: [],
+        semanticCandidates: [
+          {
+            scope: "project",
+            type: "workflow",
+            text: "Run pnpm test before release.",
+            confidence: 0.95
+          }
+        ]
+      });
+
+      await expect(
+        plane.acceptPending({
+          sessionId: "nx_test" as SessionId,
+          eventBus,
+          cwd,
+          candidateIds: candidates.map((candidate) => candidate.id)
+        })
+      ).rejects.toThrow("Read target must not be a symlink");
+      await expect(readFile(externalFile, "utf8")).resolves.toBe("[]\n");
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(external, { recursive: true, force: true });

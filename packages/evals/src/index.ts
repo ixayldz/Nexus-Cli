@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { type EventBus, type NexusEvent, createEvent } from "@nexus/events";
@@ -10,6 +10,7 @@ import {
   classifyNetworkUse
 } from "@nexus/security";
 import { type SessionId, redactString, safeJsonStringify } from "@nexus/shared";
+import { safeAtomicWriteText } from "@nexus/storage";
 
 const execFileAsync = promisify(execFile);
 
@@ -141,8 +142,20 @@ export async function runReleaseChecks(input: { cwd: string }): Promise<ReleaseC
     check("format check script exists", typeof scripts["format:check"] === "string"),
     check("provider smoke script exists", typeof scripts["provider:smoke"] === "string"),
     check("security eval script exists", typeof scripts["eval:security"] === "string"),
+    check("dogfood eval script exists", typeof scripts["eval:dogfood"] === "string"),
     check("local verifier exists", typeof scripts["verify:local"] === "string"),
+    check("external verifier exists", typeof scripts["verify:external"] === "string"),
     check("release verifier exists", typeof scripts["verify:release"] === "string"),
+    check(
+      "release verifier runs external smoke",
+      typeof scripts["verify:release"] === "string" &&
+        String(scripts["verify:release"]).includes("verify:external")
+    ),
+    check(
+      "release verifier runs dogfood eval",
+      typeof scripts["verify:release"] === "string" &&
+        String(scripts["verify:release"]).includes("eval:dogfood")
+    ),
     check(
       "smol-toml minimum is clean",
       typeof dependencies["smol-toml"] === "string" &&
@@ -300,8 +313,13 @@ export async function runBaselineEval(input: {
   };
   if (input.writeReport) {
     const outputPath = join(input.cwd, ".nexus", "evals", "eval-report.json");
-    await mkdir(join(input.cwd, ".nexus", "evals"), { recursive: true });
-    await writeFile(outputPath, `${safeJsonStringify(report)}\n`, "utf8");
+    await safeAtomicWriteText({
+      path: outputPath,
+      allowedRoot: join(input.cwd, ".nexus"),
+      workspaceRoot: input.cwd,
+      content: `${safeJsonStringify(report)}\n`,
+      rootDescription: ".nexus eval storage"
+    });
   }
   await input.eventBus?.publish(
     createEvent({

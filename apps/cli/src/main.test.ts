@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -15,9 +15,22 @@ describe("cli", () => {
     expect(result.stdout.trim()).toBe("0.1.0");
   });
 
-  it("recognizes planned top-level commands", async () => {
-    const result = await execCli(["fork"]);
-    expect(result.stdout.trim()).toContain("Fork is available");
+  it("documents fork and auth as supported commands", async () => {
+    const result = await execCli(["--help"]);
+    expect(result.stdout).toContain("fork                 Create a child session");
+    expect(result.stdout).toContain("login/logout         Manage provider auth");
+    expect(result.stdout).not.toContain("Recognized");
+  });
+
+  it("reports when fork has no parent session", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexus-cli-"));
+    try {
+      const result = await execCliFailure(["fork", "--cd", cwd]);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("No previous session was found to fork");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("lists extension surfaces", async () => {
@@ -49,7 +62,18 @@ describe("cli", () => {
   it("keeps high-risk non-interactive commands blocked", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nexus-cli-"));
     try {
-      const failure = await execCliFailure(["exec", "--profile", "fake", "--cd", cwd, "high risk"]);
+      const failure = await execCliFailure([
+        "exec",
+        "--profile",
+        "fake",
+        "--ask-for-approval",
+        "on-request",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        cwd,
+        "high risk"
+      ]);
 
       expect(failure.code).toBe(2);
       expect(failure.stdout).toContain("shell.run:denied");
@@ -95,6 +119,51 @@ describe("cli", () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it("forks the latest local session into a child manifest", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexus-cli-"));
+    try {
+      await execCli(["exec", "--profile", "fake", "--cd", cwd, "hello"]);
+
+      const result = await execCli(["fork", "--profile", "fake", "--cd", cwd]);
+
+      expect(result.stdout).toContain("Forked session");
+      const manifests = await readRunManifests(cwd);
+      expect(manifests.some((manifest) => typeof manifest.parentSessionId === "string")).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("persists and removes provider auth records", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexus-cli-"));
+    try {
+      const authPath = join(cwd, "auth.json");
+      const login = await execCli([
+        "login",
+        "openai",
+        "--api-key",
+        "sk-testlogin123456",
+        "--auth-file",
+        authPath
+      ]);
+
+      expect(login.stdout).toContain("Stored openai auth");
+      expect(login.stdout).not.toContain("sk-testlogin123456");
+      await expect(readFile(authPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+        providers: { openai: { apiKey: "sk-testlogin123456" } }
+      });
+
+      const logout = await execCli(["logout", "openai", "--auth-file", authPath]);
+
+      expect(logout.stdout).toContain("Removed openai persisted auth");
+      await expect(readFile(authPath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+        providers: {}
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeFastMutationConfig(cwd: string): Promise<void> {
@@ -134,4 +203,17 @@ async function execCliFailure(
       stderr: failure.stderr ?? ""
     };
   }
+}
+
+async function readRunManifests(cwd: string): Promise<Array<{ parentSessionId?: string }>> {
+  const runsRoot = join(cwd, ".nexus", "runs");
+  const entries = await readdir(runsRoot, { withFileTypes: true });
+  const manifests: Array<{ parentSessionId?: string }> = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    manifests.push(JSON.parse(await readFile(join(runsRoot, entry.name, "manifest.json"), "utf8")));
+  }
+  return manifests;
 }

@@ -543,23 +543,96 @@ export class SecretsScanner {
 export interface PromptInjectionFinding {
   phrase: string;
   severity: "low" | "medium" | "high";
+  source?: string | undefined;
+  category?:
+    | "instruction_override"
+    | "secret_exfiltration"
+    | "tool_abuse"
+    | "policy_bypass"
+    | "data_boundary"
+    | undefined;
 }
 
 export class PromptInjectionDetector {
-  public detect(input: string): PromptInjectionFinding[] {
+  public detect(input: string, source?: string): PromptInjectionFinding[] {
     const findings: PromptInjectionFinding[] = [];
-    for (const phrase of [
-      "ignore previous instructions",
-      "exfiltrate secrets",
-      "run this command without asking"
-    ]) {
-      if (input.toLowerCase().includes(phrase)) {
-        findings.push({ phrase, severity: "high" });
+    const lower = input.toLowerCase();
+    const seen = new Set<string>();
+    for (const pattern of promptInjectionPatterns) {
+      if (pattern.regex.test(lower) && !seen.has(pattern.phrase)) {
+        seen.add(pattern.phrase);
+        findings.push({
+          phrase: pattern.phrase,
+          severity: pattern.severity,
+          category: pattern.category,
+          ...(source ? { source } : {})
+        });
       }
     }
     return findings;
   }
 }
+
+const promptInjectionPatterns: Array<{
+  phrase: string;
+  regex: RegExp;
+  severity: PromptInjectionFinding["severity"];
+  category: NonNullable<PromptInjectionFinding["category"]>;
+}> = [
+  {
+    phrase: "ignore previous instructions",
+    regex: /\bignore\s+(?:all\s+)?(?:previous|prior|above|system|developer)\s+instructions?\b/i,
+    severity: "high",
+    category: "instruction_override"
+  },
+  {
+    phrase: "disregard system prompt",
+    regex:
+      /\b(?:disregard|override|forget)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)\b/i,
+    severity: "high",
+    category: "instruction_override"
+  },
+  {
+    phrase: "reveal system prompt",
+    regex:
+      /\b(?:reveal|print|show|dump|repeat)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)\b/i,
+    severity: "high",
+    category: "data_boundary"
+  },
+  {
+    phrase: "exfiltrate secrets",
+    regex:
+      /\b(?:exfiltrate|steal|leak|send|upload)\s+(?:all\s+)?(?:secrets?|tokens?|api\s*keys?|credentials?)\b/i,
+    severity: "high",
+    category: "secret_exfiltration"
+  },
+  {
+    phrase: "read environment secrets",
+    regex:
+      /\b(?:read|cat|print|dump)\s+(?:\.env|environment\s+variables?|process\.env|ssh\s+keys?)\b/i,
+    severity: "high",
+    category: "secret_exfiltration"
+  },
+  {
+    phrase: "run this command without asking",
+    regex: /\brun\s+(?:this\s+)?command\s+without\s+(?:asking|approval|confirmation)\b/i,
+    severity: "high",
+    category: "tool_abuse"
+  },
+  {
+    phrase: "bypass security policy",
+    regex: /\b(?:bypass|disable|turn\s+off|skip)\s+(?:approval|sandbox|security|policy|safety)\b/i,
+    severity: "high",
+    category: "policy_bypass"
+  },
+  {
+    phrase: "tool output is instruction",
+    regex:
+      /\b(?:tool|search|web|mcp)\s+output\s+(?:is|must\s+be\s+treated\s+as)\s+(?:an\s+)?instruction\b/i,
+    severity: "medium",
+    category: "data_boundary"
+  }
+];
 
 function readPath(input: unknown): string | undefined {
   if (typeof input === "object" && input !== null && "path" in input) {
@@ -589,9 +662,12 @@ function readPatchPaths(input: unknown): string[] {
   if (typeof patch !== "string") {
     return [];
   }
-  return [...patch.matchAll(/^\+\+\+\s+(?:b\/)?(.+)$/gm)]
-    .map((match) => match[1])
-    .filter((path): path is string => Boolean(path) && path !== "/dev/null");
+  return [
+    ...[...patch.matchAll(/^(?:---|\+\+\+)\s+(?:[ab]\/)?(.+)$/gm)].map((match) => match[1]),
+    ...[...patch.matchAll(/^rename (?:from|to)\s+(.+)$/gm)].map((match) => match[1])
+  ]
+    .filter((path): path is string => Boolean(path) && path !== "/dev/null")
+    .filter((path, index, paths) => paths.indexOf(path) === index);
 }
 
 function requiresApproval(policy: ApprovalPolicy): boolean {

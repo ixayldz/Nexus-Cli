@@ -23,6 +23,7 @@
     "@nexus/sandbox": "workspace:*",
     "@nexus/security": "workspace:*",
     "@nexus/shared": "workspace:*",
+    "@nexus/storage": "workspace:*",
     "zod": "^4.1.12"
   }
 }

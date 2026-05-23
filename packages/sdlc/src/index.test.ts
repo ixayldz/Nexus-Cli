@@ -14,6 +14,23 @@ const compiledContext = {
     topLevelFiles: ["package.json"],
     packageScripts: { test: "vitest", typecheck: "tsc --noEmit" },
     testCommands: ["pnpm test", "pnpm typecheck"],
+    workspacePackages: [],
+    symbols: [
+      {
+        name: "value",
+        kind: "const" as const,
+        path: "src/feature.ts",
+        line: 1,
+        exported: true
+      }
+    ],
+    testMap: [
+      {
+        sourcePath: "src/feature.ts",
+        testPaths: ["src/feature.test.ts"],
+        command: "pnpm test"
+      }
+    ],
     repoMap: {
       root: ".",
       directories: ["packages"],
@@ -110,6 +127,106 @@ describe("sdlc manager", () => {
     expect(review.status).toBe("warnings");
     expect(manager.getState().completedStages).toEqual(
       expect.arrayContaining(["discover", "verify", "review"])
+    );
+  });
+
+  it("flags package manifest changes without a lockfile", async () => {
+    const manager = new SdlcManager();
+    const review = await manager.review({
+      sessionId: "nx_test" as SessionId,
+      eventBus: new InMemoryEventBus(),
+      filesChanged: ["package.json"],
+      diff: [
+        "diff --git a/package.json b/package.json",
+        "@@ -4,6 +4,7 @@",
+        '   "dependencies": {',
+        '+    "left-pad": "1.3.0"',
+        "   }"
+      ].join("\n")
+    });
+
+    expect(review.status).toBe("warnings");
+    expect(review.findings.map((finding) => finding.title)).toContain(
+      "Package manifest changed without lockfile update"
+    );
+  });
+
+  it("adds context-aware coverage hints for exported source changes", async () => {
+    const manager = new SdlcManager();
+    const review = await manager.review({
+      sessionId: "nx_test" as SessionId,
+      eventBus: new InMemoryEventBus(),
+      filesChanged: ["src/feature.ts"],
+      diff: [
+        "diff --git a/src/feature.ts b/src/feature.ts",
+        "@@ -1,1 +1,1 @@",
+        "-export const value = 1;",
+        "+export const value = 2;"
+      ].join("\n"),
+      context: compiledContext
+    });
+
+    expect(review.coverageHints).toContain("src/feature.ts: run or update src/feature.test.ts");
+    expect(review.semanticFindings.length).toBeGreaterThan(0);
+  });
+
+  it("warns when exported source has no mapped focused test", async () => {
+    const manager = new SdlcManager();
+    const review = await manager.review({
+      sessionId: "nx_test" as SessionId,
+      eventBus: new InMemoryEventBus(),
+      filesChanged: ["src/feature.ts"],
+      context: {
+        ...compiledContext,
+        repository: {
+          ...compiledContext.repository,
+          testMap: []
+        }
+      }
+    });
+
+    expect(review.findings.map((finding) => finding.title)).toContain(
+      "Exported source lacks mapped test coverage"
+    );
+  });
+
+  it("fails review when focused tests are introduced", async () => {
+    const manager = new SdlcManager();
+    const review = await manager.review({
+      sessionId: "nx_test" as SessionId,
+      eventBus: new InMemoryEventBus(),
+      filesChanged: ["src/feature.test.ts"],
+      diff: [
+        "diff --git a/src/feature.test.ts b/src/feature.test.ts",
+        "@@ -1,2 +1,3 @@",
+        '+test.only("critical path", () => {',
+        "+  expect(true).toBe(true);",
+        "+});"
+      ].join("\n")
+    });
+
+    expect(review.status).toBe("failed");
+    expect(review.findings.at(0)?.title).toBe("Focused test committed");
+  });
+
+  it("fails review when dynamic code execution is introduced", async () => {
+    const manager = new SdlcManager();
+    const review = await manager.review({
+      sessionId: "nx_test" as SessionId,
+      eventBus: new InMemoryEventBus(),
+      filesChanged: ["src/runtime.ts"],
+      diff: [
+        "diff --git a/src/runtime.ts b/src/runtime.ts",
+        "@@ -1,2 +1,3 @@",
+        "+export function runUserCode(input: string) {",
+        "+  return eval(input);",
+        "+}"
+      ].join("\n")
+    });
+
+    expect(review.status).toBe("failed");
+    expect(review.findings.map((finding) => finding.title)).toContain(
+      "Dynamic code execution introduced"
     );
   });
 

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultConfig } from "@nexus/config";
-import { InMemoryEventBus, readJsonlEvents } from "@nexus/events";
+import { InMemoryEventBus, createEvent, readJsonlEvents } from "@nexus/events";
 import { DefaultModelRouter, ModelProviderRegistry } from "@nexus/model-router";
 import { SecurityRuntime } from "@nexus/security";
 import { type SessionId } from "@nexus/shared";
@@ -24,6 +24,30 @@ describe("runtime session foundation", () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-runtime-"));
     const runtime = makeRuntime();
     const session = await runtime.startSession({ cwd: tempDir, mode: "non-interactive" });
+    await runtime.eventBus.publish(
+      createEvent({
+        sessionId: session.id,
+        threadId: session.activeThreadId,
+        type: "user.input",
+        data: { text: "resume this work" }
+      })
+    );
+    await runtime.eventBus.publish(
+      createEvent({
+        sessionId: session.id,
+        threadId: session.activeThreadId,
+        type: "sdlc.goal.updated",
+        data: { goal: "Resume goal" }
+      })
+    );
+    await runtime.eventBus.publish(
+      createEvent({
+        sessionId: session.id,
+        threadId: session.activeThreadId,
+        type: "assistant.message",
+        data: { text: "previous answer" }
+      })
+    );
     await runtime.complete({
       finalMessage: "done",
       filesChanged: ["a.ts"],
@@ -34,10 +58,27 @@ describe("runtime session foundation", () => {
     expect(events.map((event) => event.type)).toContain("session.started");
     expect(events.map((event) => event.type)).toContain("session.completed");
 
-    const resumed = await runtime.resumeSession({ cwd: tempDir, last: true, mode: "interactive" });
+    const resumeRuntime = makeRuntime();
+    const resumed = await resumeRuntime.resumeSession({
+      cwd: tempDir,
+      last: true,
+      mode: "interactive"
+    });
     expect(resumed.id).toBe(session.id);
+    const services = runtimeServices(resumeRuntime);
+    const context = await services.context.compile({
+      cwd: tempDir,
+      config: { ...defaultConfig, sources: [] }
+    });
+    expect(context.sessionReplay?.transcript.map((item) => item.text)).toEqual(
+      expect.arrayContaining(["resume this work", "previous answer"])
+    );
+    expect(services.sdlc.getState().goal?.text).toBe("Resume goal");
 
-    const forked = await runtime.forkSession(session.id, { cwd: tempDir, mode: "interactive" });
+    const forked = await resumeRuntime.forkSession(session.id, {
+      cwd: tempDir,
+      mode: "interactive"
+    });
     expect(forked.id).not.toBe(session.id);
     expect(forked.parentSessionId).toBe(session.id);
   });

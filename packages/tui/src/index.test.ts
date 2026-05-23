@@ -5,6 +5,9 @@ import {
   createInitialTuiState,
   parseSlashCommand,
   reduceTuiEvent,
+  renderDiffSummary,
+  renderMemoryPanelText,
+  renderProcessSummary,
   renderSlashPalette,
   renderStatusLine
 } from "./index.js";
@@ -55,6 +58,11 @@ describe("tui reducer and slash commands", () => {
       type: "approval.approve_session",
       command: "/approve-session",
       argument: "approval_1"
+    });
+    expect(parseSlashCommand("/logout openai")).toMatchObject({
+      type: "auth.logout",
+      command: "/logout",
+      argument: "openai"
     });
     expect(parseSlashCommand("/fast")).toMatchObject({ type: "model.fast", command: "/fast" });
     expect(parseSlashCommand("/mention src/index.ts")).toMatchObject({
@@ -119,6 +127,44 @@ describe("tui reducer and slash commands", () => {
     expect(state.transcript.at(-1)?.text).toContain("Approval required");
   });
 
+  it("renders agent and subagent orchestration events", () => {
+    let state = createInitialTuiState({ ...defaultConfig, sources: [] });
+    state = reduceTuiEvent(state, {
+      schemaVersion: 1,
+      id: "evt_1" as never,
+      sessionId: "nx_test" as SessionId,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "agent.step.started",
+      phase: "execute",
+      label: "Run search.files"
+    });
+    state = reduceTuiEvent(state, {
+      schemaVersion: 1,
+      id: "evt_2" as never,
+      sessionId: "nx_test" as SessionId,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "agent.critic.completed",
+      decision: "finalize",
+      summary: "Critic verified output"
+    });
+    state = reduceTuiEvent(state, {
+      schemaVersion: 1,
+      id: "evt_3" as never,
+      sessionId: "nx_test" as SessionId,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "subagent.completed",
+      status: "completed",
+      summary: "Read-only review complete"
+    });
+
+    expect(state.sdlcStage).toBe("execute");
+    expect(state.transcript.map((entry) => entry.text)).toEqual([
+      "Agent execute: Run search.files",
+      "Critic finalize: Critic verified output",
+      "Subagent completed: Read-only review complete"
+    ]);
+  });
+
   it("renders streaming assistant and rollback events", () => {
     let state = createInitialTuiState({ ...defaultConfig, sources: [] });
     state = reduceTuiEvent(state, {
@@ -151,5 +197,31 @@ describe("tui reducer and slash commands", () => {
       "Rollback completed: checkpoint_1",
       "Rollback refused: Path is protected by security policy."
     ]);
+  });
+
+  it("renders polished command, diff, process, and memory summaries", () => {
+    expect(renderSlashPalette()).toContain("SDLC:");
+    expect(renderSlashPalette()).toContain("/approve-session");
+    expect(renderSlashPalette()).not.toContain("/plugins");
+    expect(
+      renderDiffSummary(
+        [
+          "diff --git a/src/a.ts b/src/a.ts",
+          "--- a/src/a.ts",
+          "+++ b/src/a.ts",
+          "@@ -1,1 +1,2 @@",
+          "-old",
+          "+new",
+          "+next"
+        ].join("\n")
+      )
+    ).toBe("1 file(s), +2/-1, 7 line(s)");
+    expect(
+      renderProcessSummary({
+        activeTools: ["file.read"],
+        processes: [{ label: "verify", status: "running" }]
+      })
+    ).toBe("1 active tool(s), 1 running process(es)");
+    expect(renderMemoryPanelText(2)).toBe("pending: 2");
   });
 });

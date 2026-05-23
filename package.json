@@ -19,16 +19,17 @@
     "pack:cli": "pnpm --filter @ixayldz/nexus-cli pack",
     "eval:baseline": "tsx packages/evals/src/cli.ts",
     "eval:security": "tsx packages/evals/src/security.ts",
+    "eval:dogfood": "tsx packages/evals/src/dogfood.ts --live",
     "eval:deepseek": "tsx packages/evals/src/deepseek-smoke.ts",
     "provider:smoke": "tsx packages/evals/src/provider-smoke.ts --provider deepseek",
-    "smoke:external": "pnpm provider:smoke",
+    "smoke:external": "tsx packages/evals/src/provider-smoke.ts --provider deepseek --require-live",
     "test:providers": "vitest run packages/providers",
     "test:security": "vitest run packages/security packages/sandbox packages/tool-bus/src/index.test.ts packages/storage/src/index.test.ts packages/learning/src/index.test.ts",
     "test:tui": "vitest run packages/tui apps/cli/src/main.test.ts apps/cli/src/interactive.test.ts",
     "verify:package": "tsx packages/evals/src/package-dry-run.ts",
     "verify:local": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm eval:baseline && pnpm eval:security && pnpm verify:package",
     "verify:external": "pnpm smoke:external",
-    "verify:release": "pnpm verify:local && tsx packages/evals/src/release-verify.ts"
+    "verify:release": "pnpm verify:local && pnpm verify:external && pnpm eval:dogfood && tsx packages/evals/src/release-verify.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",

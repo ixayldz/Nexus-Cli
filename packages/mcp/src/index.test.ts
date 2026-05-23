@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,7 +49,8 @@ describe("mcp registry", () => {
 
     await expect(registry.update(tempDir, "local", { trust: "trusted" })).resolves.toMatchObject({
       id: "local",
-      trust: "trusted"
+      trust: "trusted",
+      governance: { policyVersion: "nexus-mcp-v1" }
     });
     await expect(registry.allowTool(tempDir, "local", "search")).resolves.toMatchObject({
       allowedTools: ["search"]
@@ -57,5 +58,57 @@ describe("mcp registry", () => {
     await expect(registry.denyTool(tempDir, "local", "search")).resolves.toMatchObject({
       allowedTools: []
     });
+  });
+
+  it("stores governance and approved remote registries", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-mcp-"));
+    const registry = new McpRegistry();
+
+    await expect(registry.governance(tempDir)).resolves.toMatchObject({
+      policyVersion: "nexus-mcp-v1",
+      remoteRegistries: []
+    });
+    await expect(
+      registry.addRemoteRegistry(tempDir, "https://registry.example.test/mcp")
+    ).resolves.toMatchObject({
+      remoteRegistries: ["https://registry.example.test/mcp"]
+    });
+    await expect(
+      registry.add(tempDir, {
+        id: "remote",
+        name: "Remote MCP",
+        transport: "http",
+        url: "https://mcp.example.test/rpc",
+        enabled: false,
+        permissions: ["workspace.read"],
+        source: "remote",
+        registryUrl: "https://registry.example.test/mcp",
+        manifest: { name: "Remote MCP", version: "1.0.0", toolCount: 1 }
+      })
+    ).resolves.toMatchObject({
+      source: "remote",
+      registryUrl: "https://registry.example.test/mcp",
+      manifest: { name: "Remote MCP", version: "1.0.0" }
+    });
+  });
+
+  it("rejects a symlinked MCP registry file before reading it", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-mcp-"));
+    const external = await mkdtemp(join(tmpdir(), "nexus-mcp-external-"));
+    try {
+      await mkdir(join(tempDir, ".nexus"), { recursive: true });
+      await writeFile(join(external, "mcp.json"), JSON.stringify({ servers: [] }), "utf8");
+      try {
+        await symlink(join(external, "mcp.json"), join(tempDir, ".nexus", "mcp.json"), "file");
+      } catch {
+        return;
+      }
+
+      await expect(new McpRegistry().list(tempDir)).rejects.toThrow(
+        "Read target must not be a symlink"
+      );
+    } finally {
+      await rm(external, { recursive: true, force: true });
+    }
   });
 });
