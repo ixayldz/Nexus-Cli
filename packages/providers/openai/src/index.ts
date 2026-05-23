@@ -14,12 +14,7 @@ import {
   type ParsedToolCall,
   nexusToolDefinitions
 } from "@nexus/model-router";
-import {
-  type ToolCallId,
-  createId,
-  redactString,
-  safeJsonStringify
-} from "@nexus/shared";
+import { type ToolCallId, createId, redactString, safeJsonStringify } from "@nexus/shared";
 
 export interface OpenAiProviderOptions {
   config?: ProviderConfig;
@@ -168,8 +163,10 @@ export async function loadOpenAiAuth(input: {
     return {
       apiKey: record.apiKey,
       source: "auth_file",
-      ...(config.organization ?? record.organization ? { organization: config.organization ?? record.organization } : {}),
-      ...(config.project ?? record.project ? { project: config.project ?? record.project } : {})
+      ...((config.organization ?? record.organization)
+        ? { organization: config.organization ?? record.organization }
+        : {}),
+      ...((config.project ?? record.project) ? { project: config.project ?? record.project } : {})
     };
   }
 
@@ -216,7 +213,10 @@ export function normalizeOpenAiToolCalls(output: unknown[]): ParsedToolCall[] {
   return toolCalls;
 }
 
-function toOpenAiInput(messages: ModelMessage[], observations: ModelCallInput["observations"]): unknown[] {
+function toOpenAiInput(
+  messages: ModelMessage[],
+  observations: ModelCallInput["observations"]
+): unknown[] {
   const inputItems: unknown[] = messages.map((message) => ({
     role: message.role === "tool" ? "user" : message.role,
     content: message.content
@@ -274,7 +274,8 @@ async function toOpenAiError(providerId: string, response: Response): Promise<Mo
   const text = await response.text().catch(() => "");
   const payload = parseJsonObject(text);
   const error = readRecord(payload, "error") ?? payload;
-  const message = readString(error, "message") ?? `OpenAI request failed with HTTP ${response.status}.`;
+  const message =
+    readString(error, "message") ?? `OpenAI request failed with HTTP ${response.status}.`;
   const code = readString(error, "code") ?? readString(error, "type");
   return new ModelProviderError({
     providerId,
@@ -282,7 +283,11 @@ async function toOpenAiError(providerId: string, response: Response): Promise<Mo
     statusCode: response.status,
     ...(code ? { code } : {}),
     ...(requestId ? { requestId } : {}),
-    retryable: response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500
+    retryable:
+      response.status === 408 ||
+      response.status === 409 ||
+      response.status === 429 ||
+      response.status >= 500
   });
 }
 
@@ -347,7 +352,9 @@ function extractOutputText(output: unknown[]): string {
   return parts.join("");
 }
 
-function normalizeUsage(usage: Record<string, unknown> | undefined): ModelCallResult["usage"] | undefined {
+function normalizeUsage(
+  usage: Record<string, unknown> | undefined
+): ModelCallResult["usage"] | undefined {
   if (!usage) {
     return undefined;
   }
@@ -369,7 +376,9 @@ function resolveAuthFilePath(authFile: string | undefined, cwd: string): string 
   return join(homedir(), ".nexus", "auth.json");
 }
 
-async function readAuthRecord(path: string): Promise<{ apiKey?: string; organization?: string; project?: string } | undefined> {
+async function readAuthRecord(
+  path: string
+): Promise<{ apiKey?: string; organization?: string; project?: string } | undefined> {
   const content = await readFile(path, "utf8").catch(() => undefined);
   if (!content) {
     return undefined;

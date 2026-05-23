@@ -56,7 +56,9 @@ export class McpRegistry {
   public async update(
     cwd: string,
     serverId: string,
-    patch: Partial<Pick<McpServerConfig, "enabled" | "trust" | "allowedTools" | "envAllowlist" | "permissions">>
+    patch: Partial<
+      Pick<McpServerConfig, "enabled" | "trust" | "allowedTools" | "envAllowlist" | "permissions">
+    >
   ): Promise<McpServerConfig | undefined> {
     const store = await readStore(cwd);
     const existing = store.servers.find((server) => server.id === serverId);
@@ -74,7 +76,11 @@ export class McpRegistry {
     return updated;
   }
 
-  public async allowTool(cwd: string, serverId: string, toolName: string): Promise<McpServerConfig | undefined> {
+  public async allowTool(
+    cwd: string,
+    serverId: string,
+    toolName: string
+  ): Promise<McpServerConfig | undefined> {
     const store = await readStore(cwd);
     const existing = store.servers.find((server) => server.id === serverId);
     if (!existing) {
@@ -85,7 +91,11 @@ export class McpRegistry {
     });
   }
 
-  public async denyTool(cwd: string, serverId: string, toolName: string): Promise<McpServerConfig | undefined> {
+  public async denyTool(
+    cwd: string,
+    serverId: string,
+    toolName: string
+  ): Promise<McpServerConfig | undefined> {
     const store = await readStore(cwd);
     const existing = store.servers.find((server) => server.id === serverId);
     if (!existing) {
@@ -96,8 +106,13 @@ export class McpRegistry {
     });
   }
 
-  public async listToolAdapters(cwd: string, manifests: McpToolManifest[] = []): Promise<McpToolAdapter[]> {
-    const servers = new Set((await this.list(cwd)).filter((server) => server.enabled).map((server) => server.id));
+  public async listToolAdapters(
+    cwd: string,
+    manifests: McpToolManifest[] = []
+  ): Promise<McpToolAdapter[]> {
+    const servers = new Set(
+      (await this.list(cwd)).filter((server) => server.enabled).map((server) => server.id)
+    );
     return manifests
       .filter((manifest) => servers.has(manifest.serverId))
       .flatMap((manifest) =>
@@ -199,8 +214,10 @@ function isServer(value: unknown): value is McpServerConfig {
     typeof item.enabled === "boolean" &&
     Array.isArray(item.permissions) &&
     (item.trust === undefined || item.trust === "untrusted" || item.trust === "trusted") &&
-    (item.allowedTools === undefined || item.allowedTools.every((tool) => typeof tool === "string")) &&
-    (item.envAllowlist === undefined || item.envAllowlist.every((key) => typeof key === "string")) &&
+    (item.allowedTools === undefined ||
+      item.allowedTools.every((tool) => typeof tool === "string")) &&
+    (item.envAllowlist === undefined ||
+      item.envAllowlist.every((key) => typeof key === "string")) &&
     (item.pinnedCommandSha256 === undefined || typeof item.pinnedCommandSha256 === "string")
   );
 }

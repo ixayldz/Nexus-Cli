@@ -161,7 +161,11 @@ export class SdlcManager {
     eventBus: EventBus;
     context: CompiledContext;
   }): Promise<DiscoveryResult> {
-    await this.startStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "discover" });
+    await this.startStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "discover"
+    });
     const discovery: DiscoveryResult = {
       repoRoot: input.context.repository.repoRoot,
       packageManager: input.context.repository.packageManager,
@@ -181,7 +185,11 @@ export class SdlcManager {
       currentStage: "discover",
       discovery
     };
-    await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "discover" });
+    await this.completeStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "discover"
+    });
     return discovery;
   }
 
@@ -232,11 +240,19 @@ export class SdlcManager {
     modelPlan?: ModelPlanSuggestion;
   }): Promise<Plan> {
     if (!this.state.discovery) {
-      await this.discover({ sessionId: input.sessionId, eventBus: input.eventBus, context: input.context });
+      await this.discover({
+        sessionId: input.sessionId,
+        eventBus: input.eventBus,
+        context: input.context
+      });
     }
     await this.startStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "plan" });
-    const goal = input.prompt?.trim() || this.state.goal?.text || "Complete the requested coding task";
-    const verification = mergeVerification(detectVerification(input.context), input.modelPlan?.verification);
+    const goal =
+      input.prompt?.trim() || this.state.goal?.text || "Complete the requested coding task";
+    const verification = mergeVerification(
+      detectVerification(input.context),
+      input.modelPlan?.verification
+    );
     const plan: Plan = {
       id: createId("plan") as unknown as PlanId,
       goal,
@@ -247,8 +263,13 @@ export class SdlcManager {
       approvalRequirements:
         input.modelPlan?.approvalRequirements?.filter((item) => item.trim().length > 0) ??
         defaultApprovalRequirements(verification),
-      files: input.modelPlan?.files?.filter((item) => item.trim().length > 0) ?? input.context.mentions.map((item) => item.path),
-      definitionOfDone: this.state.definitionOfDone.length > 0 ? this.state.definitionOfDone : createDefinitionOfDone(goal),
+      files:
+        input.modelPlan?.files?.filter((item) => item.trim().length > 0) ??
+        input.context.mentions.map((item) => item.path),
+      definitionOfDone:
+        this.state.definitionOfDone.length > 0
+          ? this.state.definitionOfDone
+          : createDefinitionOfDone(goal),
       source: input.modelPlan ? "hybrid" : "deterministic",
       createdAt: nowIso()
     };
@@ -269,7 +290,11 @@ export class SdlcManager {
         }
       })
     );
-    await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "plan" });
+    await this.completeStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "plan"
+    });
     return plan;
   }
 
@@ -281,7 +306,11 @@ export class SdlcManager {
     if (input.filesChanged.length === 0) {
       return;
     }
-    await this.startStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "implement" });
+    await this.startStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "implement"
+    });
     this.state = {
       ...clearBlocked(this.state),
       currentStage: "implement",
@@ -289,7 +318,11 @@ export class SdlcManager {
         item.text.toLowerCase().includes("goal is addressed") ? { ...item, status: "passed" } : item
       )
     };
-    await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "implement" });
+    await this.completeStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "implement"
+    });
   }
 
   public async verify(input: {
@@ -301,7 +334,11 @@ export class SdlcManager {
     required?: boolean;
     evidenceEventIds?: EventId[];
   }): Promise<VerificationReport> {
-    await this.startStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "verify" });
+    await this.startStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "verify"
+    });
     const status = input.status ?? "skipped";
     const report: VerificationReport = {
       status,
@@ -317,7 +354,8 @@ export class SdlcManager {
       currentStage: "verify",
       verification: report,
       definitionOfDone: this.state.definitionOfDone.map((item) =>
-        item.text.toLowerCase().includes("verification") || item.text.toLowerCase().includes("tests")
+        item.text.toLowerCase().includes("verification") ||
+        item.text.toLowerCase().includes("tests")
           ? { ...item, status, evidenceEventIds: report.evidenceEventIds }
           : item
       )
@@ -341,7 +379,11 @@ export class SdlcManager {
         reason: report.summary
       });
     } else {
-      await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "verify" });
+      await this.completeStage({
+        sessionId: input.sessionId,
+        eventBus: input.eventBus,
+        stage: "verify"
+      });
     }
     return report;
   }
@@ -353,11 +395,20 @@ export class SdlcManager {
     diff?: string;
     modelFindings?: ReviewFinding[];
   }): Promise<ReviewResult> {
-    await this.startStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "review" });
-    const findings = sortFindings([...reviewDiff(input.filesChanged, input.diff), ...(input.modelFindings ?? [])]);
+    await this.startStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "review"
+    });
+    const findings = sortFindings([
+      ...reviewDiff(input.filesChanged, input.diff),
+      ...(input.modelFindings ?? [])
+    ]);
 
     const result: ReviewResult = {
-      status: findings.some((finding) => finding.severity === "high" || finding.severity === "critical")
+      status: findings.some(
+        (finding) => finding.severity === "high" || finding.severity === "critical"
+      )
         ? "failed"
         : findings.length > 0
           ? "warnings"
@@ -401,7 +452,11 @@ export class SdlcManager {
         reason: result.summary
       });
     } else {
-      await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "review" });
+      await this.completeStage({
+        sessionId: input.sessionId,
+        eventBus: input.eventBus,
+        stage: "review"
+      });
     }
     return result;
   }
@@ -428,7 +483,11 @@ export class SdlcManager {
         })
       );
     }
-    await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "learn" });
+    await this.completeStage({
+      sessionId: input.sessionId,
+      eventBus: input.eventBus,
+      stage: "learn"
+    });
   }
 
   public async ship(input: {
@@ -458,7 +517,9 @@ export class SdlcManager {
       verificationStatus,
       reviewStatus,
       risks,
-      rollbackNote: input.rollbackNote ?? "Use recorded checkpoints or git diff to revert this session's changes.",
+      rollbackNote:
+        input.rollbackNote ??
+        "Use recorded checkpoints or git diff to revert this session's changes.",
       createdAt: nowIso()
     };
     this.state = {
@@ -487,12 +548,20 @@ export class SdlcManager {
         reason: artifact.summary
       });
     } else {
-      await this.completeStage({ sessionId: input.sessionId, eventBus: input.eventBus, stage: "ship" });
+      await this.completeStage({
+        sessionId: input.sessionId,
+        eventBus: input.eventBus,
+        stage: "ship"
+      });
     }
     return artifact;
   }
 
-  public async startStage(input: { sessionId: SessionId; eventBus: EventBus; stage: SdlcStage }): Promise<void> {
+  public async startStage(input: {
+    sessionId: SessionId;
+    eventBus: EventBus;
+    stage: SdlcStage;
+  }): Promise<void> {
     const run: SdlcStageRun = {
       id: createId("stage") as unknown as string,
       stage: input.stage,
@@ -513,11 +582,18 @@ export class SdlcManager {
     );
   }
 
-  public async completeStage(input: { sessionId: SessionId; eventBus: EventBus; stage: SdlcStage }): Promise<void> {
+  public async completeStage(input: {
+    sessionId: SessionId;
+    eventBus: EventBus;
+    stage: SdlcStage;
+  }): Promise<void> {
     this.state = {
       ...clearBlocked(this.state),
       completedStages: markCompleted(this.state.completedStages, input.stage),
-      stageRuns: updateLatestStageRun(this.state.stageRuns, input.stage, { status: "completed", completedAt: nowIso() })
+      stageRuns: updateLatestStageRun(this.state.stageRuns, input.stage, {
+        status: "completed",
+        completedAt: nowIso()
+      })
     };
     await input.eventBus.publish(
       createEvent({
@@ -577,7 +653,10 @@ function createDefinitionOfDone(goal: string): DefinitionOfDoneItem[] {
   ];
 }
 
-function createPlanSteps(context: CompiledContext, modelPlan: ModelPlanSuggestion | undefined): PlanStep[] {
+function createPlanSteps(
+  context: CompiledContext,
+  modelPlan: ModelPlanSuggestion | undefined
+): PlanStep[] {
   const modelSteps = modelPlan?.steps?.filter((step) => step.trim().length > 0);
   const steps =
     modelSteps && modelSteps.length > 0
@@ -593,11 +672,16 @@ function createPlanSteps(context: CompiledContext, modelPlan: ModelPlanSuggestio
     id: `step_${index + 1}`,
     text: step,
     status: "pending",
-    ...(context.mentions.length > 0 ? { files: context.mentions.map((mention) => mention.path) } : {})
+    ...(context.mentions.length > 0
+      ? { files: context.mentions.map((mention) => mention.path) }
+      : {})
   }));
 }
 
-function createRisks(context: CompiledContext, modelPlan: ModelPlanSuggestion | undefined): PlanRisk[] {
+function createRisks(
+  context: CompiledContext,
+  modelPlan: ModelPlanSuggestion | undefined
+): PlanRisk[] {
   const modelRisks = modelPlan?.risks?.filter((risk) => risk.text.trim().length > 0);
   const risks: PlanRisk[] =
     modelRisks && modelRisks.length > 0
@@ -630,7 +714,11 @@ function detectVerification(context: CompiledContext): VerificationCommand[] {
   const scripts = context.repository.packageScripts;
   const commands: VerificationCommand[] = [];
   if (scripts.test) {
-    commands.push({ command: packageCommand(context.repository.packageManager, "test"), required: true, reason: "test script" });
+    commands.push({
+      command: packageCommand(context.repository.packageManager, "test"),
+      required: true,
+      reason: "test script"
+    });
   }
   if (scripts.typecheck) {
     commands.push({
@@ -640,7 +728,11 @@ function detectVerification(context: CompiledContext): VerificationCommand[] {
     });
   }
   if (scripts.lint) {
-    commands.push({ command: packageCommand(context.repository.packageManager, "lint"), required: false, reason: "lint script" });
+    commands.push({
+      command: packageCommand(context.repository.packageManager, "lint"),
+      required: false,
+      reason: "lint script"
+    });
   }
   return commands;
 }
@@ -670,7 +762,9 @@ function mergeVerification(
 function defaultApprovalRequirements(verification: VerificationCommand[]): string[] {
   return verification.length > 0
     ? verification.map((item) => `Approval may be required before running \`${item.command}\`.`)
-    : ["No verification command was detected; explicit user-provided verification may be required."];
+    : [
+        "No verification command was detected; explicit user-provided verification may be required."
+      ];
 }
 
 function packageCommand(packageManager: string, script: string): string {
@@ -704,17 +798,23 @@ function reviewDiff(filesChanged: string[], diff: string | undefined): ReviewFin
       category: "maintainability"
     });
   }
-  if (diff && /\+.*(sk-[A-Za-z0-9_-]{8,}|api[_-]?key|Bearer\s+[A-Za-z0-9._~+/=-]{12,})/i.test(diff)) {
+  if (
+    diff &&
+    /\+.*(sk-[A-Za-z0-9_-]{8,}|api[_-]?key|Bearer\s+[A-Za-z0-9._~+/=-]{12,})/i.test(diff)
+  ) {
     findings.push({
       id: `finding_${findings.length + 1}`,
       severity: "critical",
       title: "Potential secret introduced",
       description: "The diff appears to add a credential-like value or API key reference.",
-      recommendation: "Remove the secret and load credentials from configured environment variables.",
+      recommendation:
+        "Remove the secret and load credentials from configured environment variables.",
       category: "security"
     });
   }
-  const sourceTouched = uniqueFiles.some((file) => /\.(ts|tsx|js|jsx)$/.test(file) && !/\.test\./.test(file));
+  const sourceTouched = uniqueFiles.some(
+    (file) => /\.(ts|tsx|js|jsx)$/.test(file) && !/\.test\./.test(file)
+  );
   const testsTouched = uniqueFiles.some((file) => /\.test\.(ts|tsx|js|jsx)$/.test(file));
   if (sourceTouched && !testsTouched) {
     findings.push({

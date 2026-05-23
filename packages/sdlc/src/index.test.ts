@@ -108,7 +108,9 @@ describe("sdlc manager", () => {
     expect(discovery.testCommands).toContain("pnpm test");
     expect(verification.status).toBe("passed");
     expect(review.status).toBe("warnings");
-    expect(manager.getState().completedStages).toEqual(expect.arrayContaining(["discover", "verify", "review"]));
+    expect(manager.getState().completedStages).toEqual(
+      expect.arrayContaining(["discover", "verify", "review"])
+    );
   });
 
   it("blocks ship when gates are missing and passes after verification/review", async () => {

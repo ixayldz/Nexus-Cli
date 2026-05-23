@@ -568,28 +568,28 @@ nexus-weaver/
 
 ## 6. Package Responsibility Matrix
 
-| Package | Responsibility |
-|---|---|
-| `apps/cli` | Process entrypoint, CLI args, bootstrap, mode selection |
-| `packages/tui` | Interactive terminal UI only |
-| `packages/runtime` | Session lifecycle, turns, resume, fork, orchestration entry |
-| `packages/agent` | Planner, executor, verifier, reviewer, subagents |
-| `packages/sdlc` | Agentic SDLC state machine |
-| `packages/learning` | Memory candidate generation, workflow learning, eval generation |
-| `packages/context` | Repo map, file context, AGENTS.md, memory injection, compaction |
-| `packages/model-router` | Provider-neutral model calls and routing |
-| `packages/providers/*` | Concrete model API adapters |
-| `packages/tool-bus` | File, shell, git, test, MCP tool execution abstraction |
-| `packages/security` | Policy, approval, risk scoring, secrets, path protection |
-| `packages/sandbox` | Sandbox adapter orchestration |
-| `packages/mcp` | MCP server/tool integration |
-| `packages/skills` | Skill loading and progressive disclosure |
-| `packages/hooks` | Lifecycle hook execution |
-| `packages/events` | Event types, event bus, JSONL read/write, replay |
-| `packages/storage` | Local filesystem storage for config, sessions, memory, artifacts |
-| `packages/config` | Config loading, merging, validation |
-| `packages/shared` | Shared types, errors, constants, utility primitives |
-| `packages/evals` | Automated eval and regression harness |
+| Package                 | Responsibility                                                   |
+| ----------------------- | ---------------------------------------------------------------- |
+| `apps/cli`              | Process entrypoint, CLI args, bootstrap, mode selection          |
+| `packages/tui`          | Interactive terminal UI only                                     |
+| `packages/runtime`      | Session lifecycle, turns, resume, fork, orchestration entry      |
+| `packages/agent`        | Planner, executor, verifier, reviewer, subagents                 |
+| `packages/sdlc`         | Agentic SDLC state machine                                       |
+| `packages/learning`     | Memory candidate generation, workflow learning, eval generation  |
+| `packages/context`      | Repo map, file context, AGENTS.md, memory injection, compaction  |
+| `packages/model-router` | Provider-neutral model calls and routing                         |
+| `packages/providers/*`  | Concrete model API adapters                                      |
+| `packages/tool-bus`     | File, shell, git, test, MCP tool execution abstraction           |
+| `packages/security`     | Policy, approval, risk scoring, secrets, path protection         |
+| `packages/sandbox`      | Sandbox adapter orchestration                                    |
+| `packages/mcp`          | MCP server/tool integration                                      |
+| `packages/skills`       | Skill loading and progressive disclosure                         |
+| `packages/hooks`        | Lifecycle hook execution                                         |
+| `packages/events`       | Event types, event bus, JSONL read/write, replay                 |
+| `packages/storage`      | Local filesystem storage for config, sessions, memory, artifacts |
+| `packages/config`       | Config loading, merging, validation                              |
+| `packages/shared`       | Shared types, errors, constants, utility primitives              |
+| `packages/evals`        | Automated eval and regression harness                            |
 
 ---
 
@@ -1215,14 +1215,7 @@ It is not a separate CLI UX. It is a runtime layer behind familiar commands.
 ### 13.2 Stage State Machine
 
 ```ts
-export type SdlcStage =
-  | "discover"
-  | "plan"
-  | "implement"
-  | "verify"
-  | "review"
-  | "ship"
-  | "learn";
+export type SdlcStage = "discover" | "plan" | "implement" | "verify" | "review" | "ship" | "learn";
 
 export interface SdlcState {
   currentStage: SdlcStage;
@@ -1256,16 +1249,16 @@ learn → plan
 
 ### 13.4 Slash Command Mapping
 
-| Slash Command | SDLC Action |
-|---|---|
-| `/goal` | Create/update goal and definition of done |
-| `/plan` | Enter or update plan stage |
-| `/diff` | Inspect implement stage output |
-| `/review` | Enter review stage |
-| `/compact` | Preserve context and distill learning facts |
-| `/memories` | Inspect learning stage output |
-| `/status` | Display SDLC state |
-| `/agent` | Assign stage-specific subagents |
+| Slash Command | SDLC Action                                 |
+| ------------- | ------------------------------------------- |
+| `/goal`       | Create/update goal and definition of done   |
+| `/plan`       | Enter or update plan stage                  |
+| `/diff`       | Inspect implement stage output              |
+| `/review`     | Enter review stage                          |
+| `/compact`    | Preserve context and distill learning facts |
+| `/memories`   | Inspect learning stage output               |
+| `/status`     | Display SDLC state                          |
+| `/agent`      | Assign stage-specific subagents             |
 
 ### 13.5 SDLC Stage Contracts
 
@@ -1385,12 +1378,12 @@ It does not train models by default.
 export type LearningMode = "off" | "observe" | "suggest" | "active";
 ```
 
-| Mode | Behavior |
-|---|---|
-| `off` | No learning |
-| `observe` | Events collected, no memory writes |
-| `suggest` | Candidate generated, user approval required |
-| `active` | Low-risk candidate may be written if policy allows |
+| Mode      | Behavior                                           |
+| --------- | -------------------------------------------------- |
+| `off`     | No learning                                        |
+| `observe` | Events collected, no memory writes                 |
+| `suggest` | Candidate generated, user approval required        |
+| `active`  | Low-risk candidate may be written if policy allows |
 
 Default:
 
@@ -1401,13 +1394,7 @@ suggest
 ### 14.3 Memory Scopes
 
 ```ts
-export type MemoryScope =
-  | "user"
-  | "project"
-  | "team"
-  | "workflow"
-  | "eval"
-  | "session";
+export type MemoryScope = "user" | "project" | "team" | "workflow" | "eval" | "session";
 ```
 
 ### 14.4 Learning Candidate
@@ -1710,16 +1697,16 @@ export interface ModelRouter {
 
 ### 16.5 Task-Based Model Selection
 
-| Task | Model Class |
-|---|---|
-| Planning | frontier reasoning/coding model |
-| Implementation | coding-capable model |
-| Review | high-precision reviewer model |
-| Security review | high-capability model |
-| Summarization | fast/cheap model |
-| Memory distillation | fast/cheap model |
-| Subagent exploration | fast/cheap model |
-| Final response | active conversation model |
+| Task                 | Model Class                     |
+| -------------------- | ------------------------------- |
+| Planning             | frontier reasoning/coding model |
+| Implementation       | coding-capable model            |
+| Review               | high-precision reviewer model   |
+| Security review      | high-capability model           |
+| Summarization        | fast/cheap model                |
+| Memory distillation  | fast/cheap model                |
+| Subagent exploration | fast/cheap model                |
+| Final response       | active conversation model       |
 
 ### 16.6 Provider Packages
 
@@ -1959,31 +1946,19 @@ export type ApprovalDecision =
 Approval scopes:
 
 ```ts
-export type ApprovalScope =
-  | "once"
-  | "session"
-  | "project"
-  | "profile"
-  | "organization";
+export type ApprovalScope = "once" | "session" | "project" | "profile" | "organization";
 ```
 
 ### 18.5 Sandbox Modes
 
 ```ts
-export type SandboxMode =
-  | "read-only"
-  | "workspace-write"
-  | "danger-full-access";
+export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 ```
 
 ### 18.6 Approval Policies
 
 ```ts
-export type ApprovalPolicy =
-  | "always"
-  | "on-request"
-  | "on-failure"
-  | "never";
+export type ApprovalPolicy = "always" | "on-request" | "on-failure" | "never";
 ```
 
 ### 18.7 Protected Paths
@@ -2700,17 +2675,17 @@ export interface ExitCodeResolver {
 
 Exit codes:
 
-| Code | Meaning |
-|---:|---|
-| 0 | Success |
-| 1 | General failure |
-| 2 | Approval required but unavailable |
-| 3 | Sandbox violation |
-| 4 | Model/provider error |
-| 5 | Tool execution error |
-| 6 | Verification failed |
-| 7 | Invalid config |
-| 8 | Authentication error |
+| Code | Meaning                           |
+| ---: | --------------------------------- |
+|    0 | Success                           |
+|    1 | General failure                   |
+|    2 | Approval required but unavailable |
+|    3 | Sandbox violation                 |
+|    4 | Model/provider error              |
+|    5 | Tool execution error              |
+|    6 | Verification failed               |
+|    7 | Invalid config                    |
+|    8 | Authentication error              |
 
 ### 28.5 Non-Interactive Approval
 
@@ -2913,9 +2888,7 @@ export interface ShipArtifact {
 Core packages should prefer explicit result types for domain operations.
 
 ```ts
-export type Result<T, E> =
-  | { ok: true; value: T }
-  | { ok: false; error: E };
+export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 ```
 
 ### 33.2 Error Categories
@@ -3033,12 +3006,7 @@ Example:
 
 ```json
 {
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE",
-    "package.json"
-  ]
+  "files": ["dist", "README.md", "LICENSE", "package.json"]
 }
 ```
 
@@ -3048,17 +3016,17 @@ Example:
 
 ### 35.1 Test Types
 
-| Test Type | Purpose |
-|---|---|
-| Unit tests | Package-level logic |
-| Contract tests | Provider/tool/config contracts |
-| Integration tests | Runtime + tool bus + storage |
-| TUI tests | Keyboard/input/render behavior |
-| Sandbox tests | Permission and isolation behavior |
-| E2E tests | Real fixture repo workflows |
-| Golden event tests | Event stream stability |
-| Eval tests | Agent task quality |
-| Security tests | Path guard, secrets, command risk |
+| Test Type          | Purpose                           |
+| ------------------ | --------------------------------- |
+| Unit tests         | Package-level logic               |
+| Contract tests     | Provider/tool/config contracts    |
+| Integration tests  | Runtime + tool bus + storage      |
+| TUI tests          | Keyboard/input/render behavior    |
+| Sandbox tests      | Permission and isolation behavior |
+| E2E tests          | Real fixture repo workflows       |
+| Golden event tests | Event stream stability            |
+| Eval tests         | Agent task quality                |
+| Security tests     | Path guard, secrets, command risk |
 
 ### 35.2 Fake Model Provider
 
@@ -3366,13 +3334,13 @@ export interface PlatformAdapter {
 
 ### 41.3 Platform Differences
 
-| Capability | macOS | Linux | Windows |
-|---|---|---|---|
-| shell execution | yes | yes | yes |
-| filesystem guard | TypeScript guard + OS adapter | TypeScript guard + OS adapter | TypeScript guard + OS adapter |
-| hard sandbox | external adapter needed | external adapter/container preferred | external adapter/container preferred |
-| pseudo-terminal TUI | supported | supported | supported |
-| container sandbox | optional | optional | optional |
+| Capability          | macOS                         | Linux                                | Windows                              |
+| ------------------- | ----------------------------- | ------------------------------------ | ------------------------------------ |
+| shell execution     | yes                           | yes                                  | yes                                  |
+| filesystem guard    | TypeScript guard + OS adapter | TypeScript guard + OS adapter        | TypeScript guard + OS adapter        |
+| hard sandbox        | external adapter needed       | external adapter/container preferred | external adapter/container preferred |
+| pseudo-terminal TUI | supported                     | supported                            | supported                            |
+| container sandbox   | optional                      | optional                             | optional                             |
 
 ---
 

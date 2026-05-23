@@ -24,7 +24,11 @@ describe("runtime session foundation", () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-runtime-"));
     const runtime = makeRuntime();
     const session = await runtime.startSession({ cwd: tempDir, mode: "non-interactive" });
-    await runtime.complete({ finalMessage: "done", filesChanged: ["a.ts"], commandsRun: ["pnpm test"] });
+    await runtime.complete({
+      finalMessage: "done",
+      filesChanged: ["a.ts"],
+      commandsRun: ["pnpm test"]
+    });
 
     const events = await readJsonlEvents(session.eventLogPath);
     expect(events.map((event) => event.type)).toContain("session.started");

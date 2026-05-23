@@ -32,7 +32,9 @@ describe("tool bus runtime MVP tools", () => {
 
     expect(result.status).toBe("success");
     expect(result.filesChanged).toEqual(["src/index.ts"]);
-    await expect(readFile(join(ctx.cwd, "src", "index.ts"), "utf8")).resolves.toBe("export const value = 1;\n");
+    await expect(readFile(join(ctx.cwd, "src", "index.ts"), "utf8")).resolves.toBe(
+      "export const value = 1;\n"
+    );
   });
 
   it("rolls back the latest file checkpoint", async () => {
@@ -98,7 +100,9 @@ describe("tool bus runtime MVP tools", () => {
       createToolRequest({
         toolName: "patch.apply",
         input: {
-          patch: ["--- a/hello.txt", "+++ b/hello.txt", "@@ -1,1 +1,1 @@", "-old", "+new"].join("\n")
+          patch: ["--- a/hello.txt", "+++ b/hello.txt", "@@ -1,1 +1,1 @@", "-old", "+new"].join(
+            "\n"
+          )
         },
         source: "user"
       }),
@@ -119,7 +123,9 @@ describe("tool bus runtime MVP tools", () => {
       createToolRequest({
         toolName: "patch.apply",
         input: {
-          patch: ["--- a/hello.txt", "+++ b/hello.txt", "@@ -1,1 +1,1 @@", "-old", "+new"].join("\n")
+          patch: ["--- a/hello.txt", "+++ b/hello.txt", "@@ -1,1 +1,1 @@", "-old", "+new"].join(
+            "\n"
+          )
         },
         source: "user"
       }),

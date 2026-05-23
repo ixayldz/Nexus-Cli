@@ -1,11 +1,24 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  unlink,
+  writeFile
+} from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { type ResolvedConfig } from "@nexus/config";
 import { type EventBus, createEvent } from "@nexus/events";
-import { type ApprovalCoordinator, type SecurityRuntime, classifyCommandRisk } from "@nexus/security";
+import {
+  type ApprovalCoordinator,
+  type SecurityRuntime,
+  classifyCommandRisk
+} from "@nexus/security";
 import { type SandboxContext, type SandboxManager } from "@nexus/sandbox";
 import {
   type RiskLevel,
@@ -131,7 +144,12 @@ export class ToolBus {
 
     const tool = this.registry.get(request.toolName);
     if (!tool) {
-      return this.completeFailed(request, ctx, "validation", `Tool '${request.toolName}' is not registered.`);
+      return this.completeFailed(
+        request,
+        ctx,
+        "validation",
+        `Tool '${request.toolName}' is not registered.`
+      );
     }
 
     const parsedInput = tool.inputSchema.safeParse(request.input);
@@ -189,7 +207,12 @@ export class ToolBus {
           }
         })
       );
-      return this.completeDenied(request, ctx, policy.reason, policy.reason.includes("sandbox") ? 3 : 5);
+      return this.completeDenied(
+        request,
+        ctx,
+        policy.reason,
+        policy.reason.includes("sandbox") ? 3 : 5
+      );
     }
 
     if (requiresPlanBeforeMutation(request, ctx)) {
@@ -268,36 +291,36 @@ export class ToolBus {
           })
         );
         if (ctx.nonInteractive || !approval || !ctx.approvals) {
-        await ctx.eventBus.publish(
-          createEvent({
-            sessionId: ctx.sessionId,
-            type: "approval.denied",
-            severity: "warning",
-            data: {
-              requestId: approval?.id ?? "",
-              tool: request.toolName,
-              reason: "Approval is unavailable in non-interactive mode."
-            }
-          })
-        );
-        return this.completeDenied(request, ctx, policy.reason, 2);
+          await ctx.eventBus.publish(
+            createEvent({
+              sessionId: ctx.sessionId,
+              type: "approval.denied",
+              severity: "warning",
+              data: {
+                requestId: approval?.id ?? "",
+                tool: request.toolName,
+                reason: "Approval is unavailable in non-interactive mode."
+              }
+            })
+          );
+          return this.completeDenied(request, ctx, policy.reason, 2);
         }
 
         const outcome = await ctx.approvals.waitForDecision(approval.id);
         if (outcome.decision === "denied") {
-        await ctx.eventBus.publish(
-          createEvent({
-            sessionId: ctx.sessionId,
-            type: "approval.denied",
-            severity: "warning",
-            data: {
-              requestId: approval.id,
-              tool: request.toolName,
-              reason: policy.reason
-            }
-          })
-        );
-        return this.completeDenied(request, ctx, policy.reason, 2);
+          await ctx.eventBus.publish(
+            createEvent({
+              sessionId: ctx.sessionId,
+              type: "approval.denied",
+              severity: "warning",
+              data: {
+                requestId: approval.id,
+                tool: request.toolName,
+                reason: policy.reason
+              }
+            })
+          );
+          return this.completeDenied(request, ctx, policy.reason, 2);
         }
 
         await ctx.eventBus.publish(
@@ -332,7 +355,9 @@ export class ToolBus {
           ...(executionCtx.config.sandbox.memoryLimitMb !== undefined
             ? { memoryLimitMb: executionCtx.config.sandbox.memoryLimitMb }
             : {}),
-          ...(executionCtx.config.sandbox.cpuLimit !== undefined ? { cpuLimit: executionCtx.config.sandbox.cpuLimit } : {})
+          ...(executionCtx.config.sandbox.cpuLimit !== undefined
+            ? { cpuLimit: executionCtx.config.sandbox.cpuLimit }
+            : {})
         }
       }
     });
@@ -361,7 +386,12 @@ export class ToolBus {
           }
         })
       );
-      return this.completeDenied(request, executionCtx, sandbox.reason ?? "Sandbox unavailable.", 3);
+      return this.completeDenied(
+        request,
+        executionCtx,
+        sandbox.reason ?? "Sandbox unavailable.",
+        3
+      );
     }
     if (sandbox?.context) {
       executionCtx = { ...executionCtx, sandboxContext: sandbox.context };
@@ -393,7 +423,12 @@ export class ToolBus {
       );
       return result;
     } catch (error) {
-      return this.completeFailed(request, executionCtx, "execution", error instanceof Error ? error.message : String(error));
+      return this.completeFailed(
+        request,
+        executionCtx,
+        "execution",
+        error instanceof Error ? error.message : String(error)
+      );
     }
   }
 
@@ -546,9 +581,16 @@ const patchApplyInputSchema = z.object({
 const shellRunInputSchema = z.object({
   command: z.string().min(1),
   timeoutMs: z.number().int().positive().max(300000).optional(),
-  maxOutputBytes: z.number().int().positive().max(10 * 1024 * 1024).optional()
+  maxOutputBytes: z
+    .number()
+    .int()
+    .positive()
+    .max(10 * 1024 * 1024)
+    .optional()
 });
-const gitLogInputSchema = z.object({ maxCount: z.number().int().positive().max(100).optional() }).optional();
+const gitLogInputSchema = z
+  .object({ maxCount: z.number().int().positive().max(100).optional() })
+  .optional();
 const testRunInputSchema = shellRunInputSchema;
 const searchFilesInputSchema = z.object({
   query: z.string().min(1),
@@ -560,7 +602,10 @@ const mcpCallInputSchema = z.object({
   arguments: z.record(z.string(), z.unknown()).optional()
 });
 
-export class FileReadTool implements NexusTool<z.infer<typeof fileReadInputSchema>, FileReadOutput> {
+export class FileReadTool implements NexusTool<
+  z.infer<typeof fileReadInputSchema>,
+  FileReadOutput
+> {
   public readonly name = "file.read";
   public readonly description = "Read a UTF-8 file from the current workspace.";
   public readonly inputSchema = fileReadInputSchema;
@@ -571,7 +616,10 @@ export class FileReadTool implements NexusTool<z.infer<typeof fileReadInputSchem
 
   public async prepare(): Promise<void> {}
 
-  public async execute(input: z.infer<typeof fileReadInputSchema>, ctx: ToolExecutionContext): Promise<FileReadOutput> {
+  public async execute(
+    input: z.infer<typeof fileReadInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<FileReadOutput> {
     const guarded = await ctx.security.guardPath({
       cwd: ctx.cwd,
       path: input.path,
@@ -628,7 +676,10 @@ export interface FileReadOutput {
   encoding: "utf8";
 }
 
-export class FileWriteTool implements NexusTool<z.infer<typeof fileWriteInputSchema>, FileWriteOutput> {
+export class FileWriteTool implements NexusTool<
+  z.infer<typeof fileWriteInputSchema>,
+  FileWriteOutput
+> {
   public readonly name = "file.write";
   public readonly description = "Write a UTF-8 file inside the workspace.";
   public readonly inputSchema = fileWriteInputSchema;
@@ -637,7 +688,10 @@ export class FileWriteTool implements NexusTool<z.infer<typeof fileWriteInputSch
     return "medium";
   }
 
-  public async prepare(input: z.infer<typeof fileWriteInputSchema>, ctx: ToolExecutionContext): Promise<void> {
+  public async prepare(
+    input: z.infer<typeof fileWriteInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<void> {
     const guarded = await ctx.security.guardPath({
       cwd: ctx.cwd,
       path: input.path,
@@ -650,7 +704,10 @@ export class FileWriteTool implements NexusTool<z.infer<typeof fileWriteInputSch
     }
   }
 
-  public async execute(input: z.infer<typeof fileWriteInputSchema>, ctx: ToolExecutionContext): Promise<FileWriteOutput> {
+  public async execute(
+    input: z.infer<typeof fileWriteInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<FileWriteOutput> {
     const guarded = await ctx.security.guardPath({
       cwd: ctx.cwd,
       path: input.path,
@@ -677,7 +734,9 @@ export class FileWriteTool implements NexusTool<z.infer<typeof fileWriteInputSch
       beforeContent
     });
     await writeFile(guarded.absolutePath, input.content, "utf8");
-    const diff = redactString(createUnifiedDiff(guarded.relativePath, beforeContent ?? "", input.content));
+    const diff = redactString(
+      createUnifiedDiff(guarded.relativePath, beforeContent ?? "", input.content)
+    );
 
     await ctx.eventBus.publish(
       createEvent({
@@ -710,7 +769,10 @@ export interface FileWriteOutput {
   bytesWritten: number;
 }
 
-export class PatchApplyTool implements NexusTool<z.infer<typeof patchApplyInputSchema>, PatchApplyOutput> {
+export class PatchApplyTool implements NexusTool<
+  z.infer<typeof patchApplyInputSchema>,
+  PatchApplyOutput
+> {
   public readonly name = "patch.apply";
   public readonly description = "Apply a unified diff inside the workspace.";
   public readonly inputSchema = patchApplyInputSchema;
@@ -723,7 +785,10 @@ export class PatchApplyTool implements NexusTool<z.infer<typeof patchApplyInputS
     parseUnifiedPatch(input.patch);
   }
 
-  public async execute(input: z.infer<typeof patchApplyInputSchema>, ctx: ToolExecutionContext): Promise<PatchApplyOutput> {
+  public async execute(
+    input: z.infer<typeof patchApplyInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<PatchApplyOutput> {
     const filePatches = parseUnifiedPatch(input.patch);
     const changedFiles: string[] = [];
     const checkpoints: string[] = [];
@@ -795,7 +860,10 @@ export interface PatchApplyOutput {
   diff: string;
 }
 
-export class ShellRunTool implements NexusTool<z.infer<typeof shellRunInputSchema>, ShellRunOutput> {
+export class ShellRunTool implements NexusTool<
+  z.infer<typeof shellRunInputSchema>,
+  ShellRunOutput
+> {
   public readonly name = "shell.run";
   public readonly description = "Run a shell command through policy and sandbox controls.";
   public readonly inputSchema = shellRunInputSchema;
@@ -806,7 +874,10 @@ export class ShellRunTool implements NexusTool<z.infer<typeof shellRunInputSchem
 
   public async prepare(): Promise<void> {}
 
-  public async execute(input: z.infer<typeof shellRunInputSchema>, ctx: ToolExecutionContext): Promise<ShellRunOutput> {
+  public async execute(
+    input: z.infer<typeof shellRunInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<ShellRunOutput> {
     return runShellCommand(input.command, ctx, {
       timeoutMs: input.timeoutMs ?? 30000,
       maxOutputBytes: input.maxOutputBytes ?? 1024 * 1024,
@@ -825,7 +896,10 @@ export class ShellRunTool implements NexusTool<z.infer<typeof shellRunInputSchem
 export class GitStatusTool implements NexusTool<Record<string, never>, GitCommandOutput> {
   public readonly name = "git.status";
   public readonly description = "Read git branch and working tree status.";
-  public readonly inputSchema = z.object({}).optional().transform(() => ({}));
+  public readonly inputSchema = z
+    .object({})
+    .optional()
+    .transform(() => ({}));
 
   public async classifyRisk(): Promise<RiskLevel> {
     return "low";
@@ -833,20 +907,34 @@ export class GitStatusTool implements NexusTool<Record<string, never>, GitComman
 
   public async prepare(): Promise<void> {}
 
-  public async execute(_input: Record<string, never>, ctx: ToolExecutionContext): Promise<GitCommandOutput> {
-    const result = await runFixedCommand("git", ["status", "--short", "--branch"], ctx, "git.status");
+  public async execute(
+    _input: Record<string, never>,
+    ctx: ToolExecutionContext
+  ): Promise<GitCommandOutput> {
+    const result = await runFixedCommand(
+      "git",
+      ["status", "--short", "--branch"],
+      ctx,
+      "git.status"
+    );
     return { ...result, command: "git status --short --branch" };
   }
 
   public async summarize(output: GitCommandOutput): Promise<ToolSummary> {
-    return { summary: output.exitCode === 0 ? "Read git status." : "Git status unavailable.", commandsRun: [output.command] };
+    return {
+      summary: output.exitCode === 0 ? "Read git status." : "Git status unavailable.",
+      commandsRun: [output.command]
+    };
   }
 }
 
 export class GitDiffTool implements NexusTool<Record<string, never>, GitCommandOutput> {
   public readonly name = "git.diff";
   public readonly description = "Read current working tree diff.";
-  public readonly inputSchema = z.object({}).optional().transform(() => ({}));
+  public readonly inputSchema = z
+    .object({})
+    .optional()
+    .transform(() => ({}));
 
   public async classifyRisk(): Promise<RiskLevel> {
     return "low";
@@ -854,13 +942,19 @@ export class GitDiffTool implements NexusTool<Record<string, never>, GitCommandO
 
   public async prepare(): Promise<void> {}
 
-  public async execute(_input: Record<string, never>, ctx: ToolExecutionContext): Promise<GitCommandOutput> {
+  public async execute(
+    _input: Record<string, never>,
+    ctx: ToolExecutionContext
+  ): Promise<GitCommandOutput> {
     const result = await runFixedCommand("git", ["diff", "--"], ctx, "git.diff");
     return { ...result, command: "git diff --" };
   }
 
   public async summarize(output: GitCommandOutput): Promise<ToolSummary> {
-    return { summary: output.exitCode === 0 ? "Read git diff." : "Git diff unavailable.", commandsRun: [output.command] };
+    return {
+      summary: output.exitCode === 0 ? "Read git diff." : "Git diff unavailable.",
+      commandsRun: [output.command]
+    };
   }
 }
 
@@ -875,14 +969,25 @@ export class GitLogTool implements NexusTool<z.infer<typeof gitLogInputSchema>, 
 
   public async prepare(): Promise<void> {}
 
-  public async execute(input: z.infer<typeof gitLogInputSchema>, ctx: ToolExecutionContext): Promise<GitCommandOutput> {
+  public async execute(
+    input: z.infer<typeof gitLogInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<GitCommandOutput> {
     const maxCount = String(input?.maxCount ?? 5);
-    const result = await runFixedCommand("git", ["log", `--max-count=${maxCount}`, "--oneline"], ctx, "git.log");
+    const result = await runFixedCommand(
+      "git",
+      ["log", `--max-count=${maxCount}`, "--oneline"],
+      ctx,
+      "git.log"
+    );
     return { ...result, command: `git log --max-count=${maxCount} --oneline` };
   }
 
   public async summarize(output: GitCommandOutput): Promise<ToolSummary> {
-    return { summary: output.exitCode === 0 ? "Read git log." : "Git log unavailable.", commandsRun: [output.command] };
+    return {
+      summary: output.exitCode === 0 ? "Read git log." : "Git log unavailable.",
+      commandsRun: [output.command]
+    };
   }
 }
 
@@ -901,7 +1006,10 @@ export class TestRunTool implements NexusTool<z.infer<typeof testRunInputSchema>
 
   public async prepare(): Promise<void> {}
 
-  public async execute(input: z.infer<typeof testRunInputSchema>, ctx: ToolExecutionContext): Promise<TestRunOutput> {
+  public async execute(
+    input: z.infer<typeof testRunInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<TestRunOutput> {
     const shell = await runShellCommand(input.command, ctx, {
       timeoutMs: input.timeoutMs ?? 30000,
       maxOutputBytes: input.maxOutputBytes ?? 1024 * 1024,
@@ -925,7 +1033,10 @@ export interface TestRunOutput extends ShellRunOutput {
   status: "passed" | "failed";
 }
 
-export class SearchFilesTool implements NexusTool<z.infer<typeof searchFilesInputSchema>, SearchFilesOutput> {
+export class SearchFilesTool implements NexusTool<
+  z.infer<typeof searchFilesInputSchema>,
+  SearchFilesOutput
+> {
   public readonly name = "search.files";
   public readonly description = "Search text files in the workspace.";
   public readonly inputSchema = searchFilesInputSchema;
@@ -936,7 +1047,10 @@ export class SearchFilesTool implements NexusTool<z.infer<typeof searchFilesInpu
 
   public async prepare(): Promise<void> {}
 
-  public async execute(input: z.infer<typeof searchFilesInputSchema>, ctx: ToolExecutionContext): Promise<SearchFilesOutput> {
+  public async execute(
+    input: z.infer<typeof searchFilesInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<SearchFilesOutput> {
     const results: SearchFileMatch[] = [];
     const maxResults = input.maxResults ?? 50;
     await searchDirectory(ctx.cwd, ctx.cwd, input.query, results, maxResults);
@@ -980,7 +1094,10 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     return "medium";
   }
 
-  public async prepare(input: z.infer<typeof mcpCallInputSchema>, ctx: ToolExecutionContext): Promise<void> {
+  public async prepare(
+    input: z.infer<typeof mcpCallInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<void> {
     if (!ctx.config.features.mcp) {
       throw new Error("MCP execution is disabled by feature policy.");
     }
@@ -991,7 +1108,9 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     if (!server.enabled) {
       throw new Error(`MCP server '${input.serverId}' is disabled.`);
     }
-    const allowedServers = ctx.config.policy.allowedMcpServers.filter((item) => item.trim().length > 0);
+    const allowedServers = ctx.config.policy.allowedMcpServers.filter(
+      (item) => item.trim().length > 0
+    );
     if (allowedServers.length > 0 && !allowedServers.includes(server.id)) {
       throw new Error(`MCP server '${server.id}' is denied by policy.`);
     }
@@ -1001,7 +1120,11 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     if (server.trust !== "trusted") {
       throw new Error(`MCP server '${server.id}' is not trusted for execution.`);
     }
-    if (server.allowedTools && server.allowedTools.length > 0 && !server.allowedTools.includes(input.toolName)) {
+    if (
+      server.allowedTools &&
+      server.allowedTools.length > 0 &&
+      !server.allowedTools.includes(input.toolName)
+    ) {
       throw new Error(`MCP tool '${input.toolName}' is not allowlisted for server '${server.id}'.`);
     }
     if (!server.command) {
@@ -1009,7 +1132,10 @@ export class McpCallTool implements NexusTool<z.infer<typeof mcpCallInputSchema>
     }
   }
 
-  public async execute(input: z.infer<typeof mcpCallInputSchema>, ctx: ToolExecutionContext): Promise<McpCallOutput> {
+  public async execute(
+    input: z.infer<typeof mcpCallInputSchema>,
+    ctx: ToolExecutionContext
+  ): Promise<McpCallOutput> {
     const server = await findMcpServer(ctx.cwd, input.serverId);
     if (!server || !server.command) {
       throw new Error(`MCP server '${input.serverId}' is not executable.`);
@@ -1085,7 +1211,9 @@ export function createDefaultToolBus(): ToolBus {
   return new ToolBus(registry);
 }
 
-export function createToolRequest(input: Omit<ToolRequest, "id"> & { id?: ToolCallId }): ToolRequest {
+export function createToolRequest(
+  input: Omit<ToolRequest, "id"> & { id?: ToolCallId }
+): ToolRequest {
   return {
     id: input.id ?? (createId("tool") as unknown as ToolCallId),
     toolName: input.toolName,
@@ -1153,12 +1281,19 @@ async function createCheckpoint(input: {
   return { id };
 }
 
-async function readCheckpoint(runDirectory: string, checkpointId: string): Promise<FileCheckpoint | undefined> {
+async function readCheckpoint(
+  runDirectory: string,
+  checkpointId: string
+): Promise<FileCheckpoint | undefined> {
   const checkpointDirectory = join(runDirectory, "checkpoints");
   if (checkpointId === "latest") {
     const entries = await readdir(checkpointDirectory).catch(() => []);
     const checkpoints = (
-      await Promise.all(entries.filter((entry) => entry.endsWith(".json")).map((entry) => readCheckpointFile(join(checkpointDirectory, entry))))
+      await Promise.all(
+        entries
+          .filter((entry) => entry.endsWith(".json"))
+          .map((entry) => readCheckpointFile(join(checkpointDirectory, entry)))
+      )
     )
       .filter((checkpoint): checkpoint is FileCheckpoint => Boolean(checkpoint))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -1197,7 +1332,10 @@ async function readCheckpointFile(filePath: string): Promise<FileCheckpoint | un
   return undefined;
 }
 
-async function publishRollbackRefused(ctx: ToolExecutionContext, result: RollbackResult): Promise<void> {
+async function publishRollbackRefused(
+  ctx: ToolExecutionContext,
+  result: RollbackResult
+): Promise<void> {
   await ctx.eventBus.publish(
     createEvent({
       sessionId: ctx.sessionId,
@@ -1243,7 +1381,10 @@ function parseUnifiedPatch(patch: string): ParsedFilePatch[] {
       continue;
     }
     const hunk = current?.hunks.at(-1);
-    if (hunk && (line.startsWith(" ") || line.startsWith("+") || line.startsWith("-") || line === "\\")) {
+    if (
+      hunk &&
+      (line.startsWith(" ") || line.startsWith("+") || line.startsWith("-") || line === "\\")
+    ) {
       hunk.lines.push(line);
     }
   }
@@ -1288,7 +1429,12 @@ function applyFilePatch(beforeContent: string, patch: ParsedFilePatch): string {
   return output.join("\n");
 }
 
-function assertPatchLine(actual: string | undefined, expected: string, path: string, hunkStart: number): void {
+function assertPatchLine(
+  actual: string | undefined,
+  expected: string,
+  path: string,
+  hunkStart: number
+): void {
   if ((actual ?? "") !== expected) {
     throw new Error(`Patch context mismatch in ${path} near original line ${hunkStart}.`);
   }
@@ -1377,7 +1523,10 @@ async function runProcess(
     const child = spawn(processSpec.command, processSpec.args, {
       cwd: processSpec.cwd,
       shell: processSpec.shell,
-      env: sanitizeEnv(process.env, ctx.sandboxContext?.hardEnforced ? ctx.sandboxContext.envAllowlist : undefined),
+      env: sanitizeEnv(
+        process.env,
+        ctx.sandboxContext?.hardEnforced ? ctx.sandboxContext.envAllowlist : undefined
+      ),
       windowsHide: true
     });
     let stdout = "";
@@ -1392,13 +1541,15 @@ async function runProcess(
 
     child.stdout?.on("data", (chunk: Buffer) => {
       const next = redactString(chunk.toString("utf8"));
-      outputEvents.push(ctx.eventBus.publish(
-        createEvent({
-          sessionId: ctx.sessionId,
-          type: "shell.output",
-          data: { stream: "stdout", text: next }
-        })
-      ));
+      outputEvents.push(
+        ctx.eventBus.publish(
+          createEvent({
+            sessionId: ctx.sessionId,
+            type: "shell.output",
+            data: { stream: "stdout", text: next }
+          })
+        )
+      );
       const remaining = options.maxOutputBytes - Buffer.byteLength(stdout, "utf8");
       if (remaining > 0) {
         stdout += next.slice(0, remaining);
@@ -1407,13 +1558,15 @@ async function runProcess(
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       const next = redactString(chunk.toString("utf8"));
-      outputEvents.push(ctx.eventBus.publish(
-        createEvent({
-          sessionId: ctx.sessionId,
-          type: "shell.output",
-          data: { stream: "stderr", text: next }
-        })
-      ));
+      outputEvents.push(
+        ctx.eventBus.publish(
+          createEvent({
+            sessionId: ctx.sessionId,
+            type: "shell.output",
+            data: { stream: "stderr", text: next }
+          })
+        )
+      );
       const remaining = options.maxOutputBytes - Buffer.byteLength(stderr, "utf8");
       if (remaining > 0) {
         stderr += next.slice(0, remaining);
@@ -1574,8 +1727,10 @@ function isStoredMcpServer(value: unknown): value is StoredMcpServer {
     typeof item.enabled === "boolean" &&
     Array.isArray(item.permissions) &&
     (item.trust === undefined || item.trust === "untrusted" || item.trust === "trusted") &&
-    (item.allowedTools === undefined || item.allowedTools.every((tool) => typeof tool === "string")) &&
-    (item.envAllowlist === undefined || item.envAllowlist.every((key) => typeof key === "string")) &&
+    (item.allowedTools === undefined ||
+      item.allowedTools.every((tool) => typeof tool === "string")) &&
+    (item.envAllowlist === undefined ||
+      item.envAllowlist.every((key) => typeof key === "string")) &&
     (item.pinnedCommandSha256 === undefined || typeof item.pinnedCommandSha256 === "string") &&
     (item.command === undefined || typeof item.command === "string") &&
     (item.args === undefined || item.args.every((arg) => typeof arg === "string")) &&
@@ -1600,7 +1755,10 @@ async function callMcpStdioTool(input: {
     let nextId = 1;
     let stdoutBuffer = "";
     let stderr = "";
-    const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+    const pending = new Map<
+      number,
+      { resolve: (value: unknown) => void; reject: (error: Error) => void }
+    >();
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       rejectPromise(new Error(`MCP tool '${input.toolName}' timed out.`));
@@ -1672,7 +1830,9 @@ async function callMcpStdioTool(input: {
       if (pending.size > 0) {
         cleanup();
         rejectPromise(
-          new Error(`MCP server '${input.server.id}' exited before completing the request (exit ${exitCode ?? "null"}). ${stderr}`.trim())
+          new Error(
+            `MCP server '${input.server.id}' exited before completing the request (exit ${exitCode ?? "null"}). ${stderr}`.trim()
+          )
         );
       }
     });
@@ -1828,7 +1988,16 @@ async function searchDirectory(
 }
 
 function sanitizeEnv(source: NodeJS.ProcessEnv, extraAllowed: string[] = []): NodeJS.ProcessEnv {
-  const allowed = new Set(["PATH", "Path", "SystemRoot", "TEMP", "TMP", "HOME", "USERPROFILE", "PNPM_HOME"]);
+  const allowed = new Set([
+    "PATH",
+    "Path",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "HOME",
+    "USERPROFILE",
+    "PNPM_HOME"
+  ]);
   for (const key of extraAllowed) {
     allowed.add(key);
   }

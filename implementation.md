@@ -65,28 +65,28 @@ PRD-ready agentic CLI runtime olacaktır.
 
 Mevcut değerlendirmeye göre Nexus şu seviyededir:
 
-| Alan | Durum |
-|---|---|
-| CLI command surface | Çalışıyor |
-| `nexus exec` | Güçlü |
-| JSONL event stream | Çalışıyor |
-| Session storage | Çalışıyor |
-| Context compiler | Çalışıyor |
-| Tool Bus | Ciddi MVP seviyesinde |
-| Approval policy | Temel olarak çalışıyor |
-| Protected paths | Çalışıyor |
-| Network policy | Temel/regex tabanlı |
-| Secrets redaction | Kısmen/iyi |
-| SDLC Plane | MVP seviyesinde |
-| Learning Plane | MVP seviyesinde |
-| TUI | Var ama polish eksik |
-| Subagent | Stub/placeholder seviyesinde |
-| MCP | Temel var, governance eksik |
-| Provider layer | Adapter var, live validation eksik |
-| Hard sandbox | Eksik |
-| Ship stage | Zayıf |
-| Real repo validation | Eksik |
-| Product eval metrics | Eksik |
+| Alan                 | Durum                              |
+| -------------------- | ---------------------------------- |
+| CLI command surface  | Çalışıyor                          |
+| `nexus exec`         | Güçlü                              |
+| JSONL event stream   | Çalışıyor                          |
+| Session storage      | Çalışıyor                          |
+| Context compiler     | Çalışıyor                          |
+| Tool Bus             | Ciddi MVP seviyesinde              |
+| Approval policy      | Temel olarak çalışıyor             |
+| Protected paths      | Çalışıyor                          |
+| Network policy       | Temel/regex tabanlı                |
+| Secrets redaction    | Kısmen/iyi                         |
+| SDLC Plane           | MVP seviyesinde                    |
+| Learning Plane       | MVP seviyesinde                    |
+| TUI                  | Var ama polish eksik               |
+| Subagent             | Stub/placeholder seviyesinde       |
+| MCP                  | Temel var, governance eksik        |
+| Provider layer       | Adapter var, live validation eksik |
+| Hard sandbox         | Eksik                              |
+| Ship stage           | Zayıf                              |
+| Real repo validation | Eksik                              |
+| Product eval metrics | Eksik                              |
 
 Bu plan, mevcut MVP'yi bozmadan yukarıdaki açıkları sistematik olarak kapatır.
 
@@ -216,35 +216,35 @@ release verification artifact
 
 Kalan açıklar 10 workstream altında kapatılacaktır.
 
-| Workstream | Name | Priority |
-|---:|---|---|
-| WS1 | Hard Sandbox & Security Hardening | P0 |
-| WS2 | Provider Production Validation | P0 |
-| WS3 | TUI/UX Codex-Standard Polish | P0 |
-| WS4 | Real Repository Dogfooding & Metrics | P0 |
-| WS5 | Review, Plan and Verification Quality Upgrade | P0 |
-| WS6 | Real Subagent Runtime | P1 |
-| WS7 | MCP Governance | P1 |
-| WS8 | Learning Plane Productionization | P1 |
-| WS9 | Ship Stage Completion | P1 |
-| WS10 | Eval, Release and Documentation Readiness | P0/P1 |
+| Workstream | Name                                          | Priority |
+| ---------: | --------------------------------------------- | -------- |
+|        WS1 | Hard Sandbox & Security Hardening             | P0       |
+|        WS2 | Provider Production Validation                | P0       |
+|        WS3 | TUI/UX Codex-Standard Polish                  | P0       |
+|        WS4 | Real Repository Dogfooding & Metrics          | P0       |
+|        WS5 | Review, Plan and Verification Quality Upgrade | P0       |
+|        WS6 | Real Subagent Runtime                         | P1       |
+|        WS7 | MCP Governance                                | P1       |
+|        WS8 | Learning Plane Productionization              | P1       |
+|        WS9 | Ship Stage Completion                         | P1       |
+|       WS10 | Eval, Release and Documentation Readiness     | P0/P1    |
 
 ---
 
 ## 6. Milestone Overview
 
-| Milestone | Name | Goal |
-|---:|---|---|
-| M1 | Security Closure | Hard sandbox adapter, fail-closed enforcement, stronger shell/network controls |
-| M2 | Provider Closure | OpenAI/DeepSeek live smoke validation, provider matrix, error normalization |
-| M3 | TUI Closure | Codex-standard TUI polish for diff, approval, status, process, memory |
-| M4 | SDLC Quality Closure | Plan/review/verify intelligence upgrades |
-| M5 | Subagent Runtime | Real isolated subagents with context and permission profiles |
-| M6 | MCP Governance | Manifest, allowlist, local/remote distinction, version pinning, policy |
-| M7 | Learning Plane Hardening | Better candidates, source evidence, false-positive metrics, memory audit |
-| M8 | Ship Stage | PR summary, changelog, release note, rollback note, artifact schema |
-| M9 | Real Repo Validation | 20+ dogfooding sessions and quality dashboard |
-| M10 | Beta Readiness | 100+ session measurement framework, docs, package safety, release gates |
+| Milestone | Name                     | Goal                                                                           |
+| --------: | ------------------------ | ------------------------------------------------------------------------------ |
+|        M1 | Security Closure         | Hard sandbox adapter, fail-closed enforcement, stronger shell/network controls |
+|        M2 | Provider Closure         | OpenAI/DeepSeek live smoke validation, provider matrix, error normalization    |
+|        M3 | TUI Closure              | Codex-standard TUI polish for diff, approval, status, process, memory          |
+|        M4 | SDLC Quality Closure     | Plan/review/verify intelligence upgrades                                       |
+|        M5 | Subagent Runtime         | Real isolated subagents with context and permission profiles                   |
+|        M6 | MCP Governance           | Manifest, allowlist, local/remote distinction, version pinning, policy         |
+|        M7 | Learning Plane Hardening | Better candidates, source evidence, false-positive metrics, memory audit       |
+|        M8 | Ship Stage               | PR summary, changelog, release note, rollback note, artifact schema            |
+|        M9 | Real Repo Validation     | 20+ dogfooding sessions and quality dashboard                                  |
+|       M10 | Beta Readiness           | 100+ session measurement framework, docs, package safety, release gates        |
 
 ---
 
@@ -628,18 +628,18 @@ pnpm provider:smoke --all
 
 Test cases:
 
-| Test | Purpose |
-|---|---|
-| simple_text | Basic response |
-| streaming_text | Streaming response |
-| tool_call_file_read | Tool call normalization |
-| tool_call_shell_safe | Shell command proposal |
-| auth_error | Invalid/missing key handling |
-| timeout | Timeout handling |
-| rate_limit | Rate-limit normalization |
-| malformed_response | Robust parser behavior |
-| jsonl_integrity | Event stream correctness |
-| redaction | No API key in logs |
+| Test                 | Purpose                      |
+| -------------------- | ---------------------------- |
+| simple_text          | Basic response               |
+| streaming_text       | Streaming response           |
+| tool_call_file_read  | Tool call normalization      |
+| tool_call_shell_safe | Shell command proposal       |
+| auth_error           | Invalid/missing key handling |
+| timeout              | Timeout handling             |
+| rate_limit           | Rate-limit normalization     |
+| malformed_response   | Robust parser behavior       |
+| jsonl_integrity      | Event stream correctness     |
+| redaction            | No API key in logs           |
 
 ---
 
@@ -1951,8 +1951,11 @@ Release note:
 
 ```md
 ### Added
+
 ### Changed
+
 ### Fixed
+
 ### Risks
 ```
 

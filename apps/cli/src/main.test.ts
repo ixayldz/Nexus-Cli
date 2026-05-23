@@ -6,23 +6,24 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const cliPath = resolve("apps/cli/dist/main.js");
+const cliPath = resolve("apps/cli/src/main.ts");
+const tsxCliPath = resolve("node_modules/tsx/dist/cli.mjs");
 
 describe("cli", () => {
   it("prints version", async () => {
-    const result = await execFileAsync(process.execPath, ["apps/cli/dist/main.js", "--version"]);
-    expect(result.stdout.trim()).toBe("0.0.0");
+    const result = await execCli(["--version"]);
+    expect(result.stdout.trim()).toBe("0.1.0");
   });
 
   it("recognizes planned top-level commands", async () => {
-    const result = await execFileAsync(process.execPath, ["apps/cli/dist/main.js", "fork"]);
+    const result = await execCli(["fork"]);
     expect(result.stdout.trim()).toContain("Fork is available");
   });
 
   it("lists extension surfaces", async () => {
-    const mcp = await execFileAsync(process.execPath, ["apps/cli/dist/main.js", "mcp"]);
-    const skills = await execFileAsync(process.execPath, ["apps/cli/dist/main.js", "skills"]);
-    const hooks = await execFileAsync(process.execPath, ["apps/cli/dist/main.js", "hooks"]);
+    const mcp = await execCli(["mcp"]);
+    const skills = await execCli(["skills"]);
+    const hooks = await execCli(["hooks"]);
 
     expect(mcp.stdout).toContain("No MCP servers configured");
     expect(skills.stdout).toContain("code-review");
@@ -34,10 +35,12 @@ describe("cli", () => {
     try {
       await writeFastMutationConfig(cwd);
 
-      const result = await execFileAsync(process.execPath, [cliPath, "exec", "--cd", cwd, "write hello"]);
+      const result = await execCli(["exec", "--profile", "fake", "--cd", cwd, "write hello"]);
 
       expect(result.stdout).toContain("file.write:success");
-      await expect(readFile(join(cwd, "src", "hello.ts"), "utf8")).resolves.toContain("return \"hello\"");
+      await expect(readFile(join(cwd, "src", "hello.ts"), "utf8")).resolves.toContain(
+        'return "hello"'
+      );
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -46,7 +49,7 @@ describe("cli", () => {
   it("keeps high-risk non-interactive commands blocked", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nexus-cli-"));
     try {
-      const failure = await execCliFailure(["exec", "--cd", cwd, "high risk"]);
+      const failure = await execCliFailure(["exec", "--profile", "fake", "--cd", cwd, "high risk"]);
 
       expect(failure.code).toBe(2);
       expect(failure.stdout).toContain("shell.run:denied");
@@ -61,9 +64,10 @@ describe("cli", () => {
     try {
       await writeFastMutationConfig(cwd);
 
-      await execFileAsync(process.execPath, [
-        cliPath,
+      await execCli([
         "exec",
+        "--profile",
+        "fake",
         "--cd",
         cwd,
         "--output",
@@ -77,10 +81,16 @@ describe("cli", () => {
         "write hello"
       ]);
 
-      await expect(readFile(join(cwd, "artifacts", "answer.txt"), "utf8")).resolves.toContain("file.write:success");
-      await expect(readFile(join(cwd, "artifacts", "session.patch"), "utf8")).resolves.toContain("src/hello.ts");
+      await expect(readFile(join(cwd, "artifacts", "answer.txt"), "utf8")).resolves.toContain(
+        "file.write:success"
+      );
+      await expect(readFile(join(cwd, "artifacts", "session.patch"), "utf8")).resolves.toContain(
+        "src/hello.ts"
+      );
       await expect(readFile(join(cwd, "artifacts", "report.json"), "utf8")).resolves.toBe("{}\n");
-      await expect(readFile(join(cwd, "artifacts", "events.jsonl"), "utf8")).resolves.toContain("session.completed");
+      await expect(readFile(join(cwd, "artifacts", "events.jsonl"), "utf8")).resolves.toContain(
+        "session.completed"
+      );
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -91,14 +101,30 @@ async function writeFastMutationConfig(cwd: string): Promise<void> {
   await mkdir(join(cwd, ".nexus"), { recursive: true });
   await writeFile(
     join(cwd, ".nexus", "config.toml"),
-    ["[sdlc]", "require_verification = false", "require_review_for_security_sensitive_changes = false"].join("\n"),
+    [
+      "[sdlc]",
+      "require_verification = false",
+      "require_review_for_security_sensitive_changes = false"
+    ].join("\n"),
     "utf8"
   );
 }
 
-async function execCliFailure(args: string[]): Promise<{ code: number | undefined; stdout: string; stderr: string }> {
+async function execCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync(
+    process.execPath,
+    [tsxCliPath, "--tsconfig", "apps/cli/tsconfig.json", cliPath, ...args],
+    {
+      cwd: process.cwd()
+    }
+  );
+}
+
+async function execCliFailure(
+  args: string[]
+): Promise<{ code: number | undefined; stdout: string; stderr: string }> {
   try {
-    await execFileAsync(process.execPath, [cliPath, ...args]);
+    await execCli(args);
     throw new Error("Expected CLI command to fail.");
   } catch (error) {
     const failure = error as { code?: number; stdout?: string; stderr?: string };

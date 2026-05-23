@@ -23,9 +23,41 @@ export default defineConfig({
     }
   },
   test: {
-    include: ["packages/**/*.test.ts", "packages/**/*.test.tsx", "apps/**/*.test.ts", "apps/**/*.test.tsx"],
+    include: [
+      "packages/**/*.test.ts",
+      "packages/**/*.test.tsx",
+      "apps/**/*.test.ts",
+      "apps/**/*.test.tsx"
+    ],
     environment: "node",
     testTimeout: 20000,
-    hookTimeout: 20000
+    hookTimeout: 20000,
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "html", "lcov"],
+      include: ["apps/**/src/**/*.{ts,tsx}", "packages/**/src/**/*.{ts,tsx}"],
+      exclude: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "apps/cli/src/main.ts",
+        "packages/evals/src/cli.ts",
+        "packages/evals/src/deepseek-smoke.ts",
+        "packages/evals/src/package-dry-run.ts",
+        "packages/evals/src/provider-smoke.ts",
+        "packages/evals/src/release-verify.ts",
+        "packages/evals/src/security.ts",
+        "**/dist/**",
+        "**/fixtures/**",
+        "packages/test-utils/**"
+      ],
+      thresholds: {
+        lines: 70,
+        statements: 70,
+        functions: 70,
+        branches: 55
+      }
+    }
   }
 });

@@ -41,13 +41,17 @@ describe("session storage", () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-storage-"));
     externalDir = await mkdtemp(join(tmpdir(), "nexus-storage-external-"));
     try {
-      await symlink(externalDir, join(tempDir, ".nexus"), process.platform === "win32" ? "junction" : "dir");
+      await symlink(
+        externalDir,
+        join(tempDir, ".nexus"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
     } catch {
       return;
     }
 
-    await expect(createSessionStorage({ cwd: tempDir, sessionId: "nx_test" as SessionId })).rejects.toThrow(
-      ".nexus project storage must not be a symlink"
-    );
+    await expect(
+      createSessionStorage({ cwd: tempDir, sessionId: "nx_test" as SessionId })
+    ).rejects.toThrow(".nexus project storage must not be a symlink");
   });
 });

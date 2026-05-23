@@ -1,12 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { defaultConfig } from "@nexus/config";
-import {
-  NexusTuiApp,
-  createInitialTuiState,
-  reduceTuiEvent,
-  type RuntimeIntent
-} from "./index.js";
+import { NexusTuiApp, createInitialTuiState, reduceTuiEvent, type RuntimeIntent } from "./index.js";
 
 describe("Ink TUI components", () => {
   it("renders the full TUI surface from event-derived state", () => {
@@ -39,7 +34,10 @@ describe("Ink TUI components", () => {
   it("submits prompt text from the composer", async () => {
     const onSubmitPrompt = vi.fn();
     const app = render(
-      <NexusTuiApp state={createInitialTuiState({ ...defaultConfig, sources: [] })} onSubmitPrompt={onSubmitPrompt} />
+      <NexusTuiApp
+        state={createInitialTuiState({ ...defaultConfig, sources: [] })}
+        onSubmitPrompt={onSubmitPrompt}
+      />
     );
 
     app.stdin.write("hello");
@@ -53,7 +51,10 @@ describe("Ink TUI components", () => {
   it("dispatches slash command intents from the composer", async () => {
     const onIntent = vi.fn<(intent: RuntimeIntent) => void>();
     const app = render(
-      <NexusTuiApp state={createInitialTuiState({ ...defaultConfig, sources: [] })} onIntent={onIntent} />
+      <NexusTuiApp
+        state={createInitialTuiState({ ...defaultConfig, sources: [] })}
+        onIntent={onIntent}
+      />
     );
 
     app.stdin.write("/status");

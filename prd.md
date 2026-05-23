@@ -391,17 +391,17 @@ JSONL event stream üretmelidir.
 
 Nexus exec deterministik exit code üretmelidir:
 
-| Exit Code | Meaning |
-|---:|---|
-| 0 | Task completed successfully |
-| 1 | Task failed |
-| 2 | User/policy approval required but unavailable |
-| 3 | Sandbox violation |
-| 4 | Model/provider error |
-| 5 | Tool execution error |
-| 6 | Verification failed |
-| 7 | Invalid config |
-| 8 | Authentication error |
+| Exit Code | Meaning                                       |
+| --------: | --------------------------------------------- |
+|         0 | Task completed successfully                   |
+|         1 | Task failed                                   |
+|         2 | User/policy approval required but unavailable |
+|         3 | Sandbox violation                             |
+|         4 | Model/provider error                          |
+|         5 | Tool execution error                          |
+|         6 | Verification failed                           |
+|         7 | Invalid config                                |
+|         8 | Authentication error                          |
 
 ### 11.5 Artifact Output
 
@@ -445,66 +445,66 @@ Nexus, Codex-style slash command standardını korumalıdır.
 
 ### 12.1 Core Session Commands
 
-| Command | Requirement |
-|---|---|
-| `/model` | Aktif modeli değiştirmeli veya model seçiciyi açmalı |
-| `/fast` | Hızlı/düşük maliyetli modele geçmeli |
-| `/permissions` | Sandbox ve approval ayarlarını göstermeli/değiştirmeli |
-| `/approve` | Son istenen tool/command onayını yönetmeli |
-| `/status` | Session, model, sandbox, approval, SDLC ve learning durumunu göstermeli |
-| `/debug-config` | Etkin config kaynaklarını ve override zincirini göstermeli |
-| `/statusline` | Footer/status line alanlarını yapılandırmalı |
-| `/theme` | TUI theme ayarlarını yönetmeli |
-| `/raw` | Raw transcript/event görünümünü açmalı |
-| `/copy` | Son cevap veya seçili çıktıyı panoya kopyalamalı |
-| `/quit` | Oturumu kapatmalı |
-| `/exit` | Oturumu kapatmalı |
-| `/logout` | Auth session’ını sonlandırmalı |
+| Command         | Requirement                                                             |
+| --------------- | ----------------------------------------------------------------------- |
+| `/model`        | Aktif modeli değiştirmeli veya model seçiciyi açmalı                    |
+| `/fast`         | Hızlı/düşük maliyetli modele geçmeli                                    |
+| `/permissions`  | Sandbox ve approval ayarlarını göstermeli/değiştirmeli                  |
+| `/approve`      | Son istenen tool/command onayını yönetmeli                              |
+| `/status`       | Session, model, sandbox, approval, SDLC ve learning durumunu göstermeli |
+| `/debug-config` | Etkin config kaynaklarını ve override zincirini göstermeli              |
+| `/statusline`   | Footer/status line alanlarını yapılandırmalı                            |
+| `/theme`        | TUI theme ayarlarını yönetmeli                                          |
+| `/raw`          | Raw transcript/event görünümünü açmalı                                  |
+| `/copy`         | Son cevap veya seçili çıktıyı panoya kopyalamalı                        |
+| `/quit`         | Oturumu kapatmalı                                                       |
+| `/exit`         | Oturumu kapatmalı                                                       |
+| `/logout`       | Auth session’ını sonlandırmalı                                          |
 
 ### 12.2 SDLC and Context Commands
 
-| Command | Requirement |
-|---|---|
-| `/plan` | SDLC plan stage’i başlatmalı veya planı güncellemeli |
-| `/goal` | Task objective ve definition of done tanımlamalı |
-| `/compact` | Context’i özetlemeli, önemli bilgileri korumalı, learning candidate çıkarabilmeli |
-| `/mention` | Dosya, klasör veya sembol context’e eklemeli |
-| `/init` | Proje için başlangıç talimatlarını ve Nexus config scaffold’unu oluşturmalı |
-| `/memories` | Learning Plane ve memory ayarlarını göstermeli/yönetmeli |
-| `/skills` | Skill seçme, yükleme veya context’e dahil etme işlemlerini yapmalı |
+| Command     | Requirement                                                                       |
+| ----------- | --------------------------------------------------------------------------------- |
+| `/plan`     | SDLC plan stage’i başlatmalı veya planı güncellemeli                              |
+| `/goal`     | Task objective ve definition of done tanımlamalı                                  |
+| `/compact`  | Context’i özetlemeli, önemli bilgileri korumalı, learning candidate çıkarabilmeli |
+| `/mention`  | Dosya, klasör veya sembol context’e eklemeli                                      |
+| `/init`     | Proje için başlangıç talimatlarını ve Nexus config scaffold’unu oluşturmalı       |
+| `/memories` | Learning Plane ve memory ayarlarını göstermeli/yönetmeli                          |
+| `/skills`   | Skill seçme, yükleme veya context’e dahil etme işlemlerini yapmalı                |
 
 ### 12.3 Code and Review Commands
 
-| Command | Requirement |
-|---|---|
-| `/diff` | Working tree diff’ini göstermeli ve açıklamalı |
-| `/review` | Diff/working tree review başlatmalı |
-| `/clear` | Görünür oturum context’ini temizlemeli |
-| `/new` | Yeni conversation başlatmalı |
-| `/resume` | Önceki conversation/session devam ettirmeli |
-| `/fork` | Mevcut session’dan alternatif thread oluşturmalı |
-| `/side` | Side thread veya paralel konuşma açmalı |
+| Command   | Requirement                                      |
+| --------- | ------------------------------------------------ |
+| `/diff`   | Working tree diff’ini göstermeli ve açıklamalı   |
+| `/review` | Diff/working tree review başlatmalı              |
+| `/clear`  | Görünür oturum context’ini temizlemeli           |
+| `/new`    | Yeni conversation başlatmalı                     |
+| `/resume` | Önceki conversation/session devam ettirmeli      |
+| `/fork`   | Mevcut session’dan alternatif thread oluşturmalı |
+| `/side`   | Side thread veya paralel konuşma açmalı          |
 
 ### 12.4 Agent, MCP and Extension Commands
 
-| Command | Requirement |
-|---|---|
-| `/agent` | Subagent/thread yönetimini açmalı |
-| `/mcp` | MCP server ve tool listesini göstermeli/yönetmeli |
-| `/apps` | App connector durumunu göstermeli |
-| `/plugins` | Plugin yönetimini açmalı |
-| `/hooks` | Lifecycle hook’larını göstermeli/yönetmeli |
-| `/experimental` | Deneysel özellikleri göstermeli/değiştirmeli |
+| Command         | Requirement                                       |
+| --------------- | ------------------------------------------------- |
+| `/agent`        | Subagent/thread yönetimini açmalı                 |
+| `/mcp`          | MCP server ve tool listesini göstermeli/yönetmeli |
+| `/apps`         | App connector durumunu göstermeli                 |
+| `/plugins`      | Plugin yönetimini açmalı                          |
+| `/hooks`        | Lifecycle hook’larını göstermeli/yönetmeli        |
+| `/experimental` | Deneysel özellikleri göstermeli/değiştirmeli      |
 
 ### 12.5 Terminal and Sandbox Commands
 
-| Command | Requirement |
-|---|---|
-| `/ps` | Background process/tool durumunu göstermeli |
-| `/stop` | Running/background process’leri durdurmalı |
-| `/sandbox-add-read-dir` | Ek read-only path izni tanımlamalı |
-| `/keymap` | Keyboard shortcut ayarlarını göstermeli |
-| `/vim` | Vim mode’u açmalı/kapatmalı |
+| Command                 | Requirement                                 |
+| ----------------------- | ------------------------------------------- |
+| `/ps`                   | Background process/tool durumunu göstermeli |
+| `/stop`                 | Running/background process’leri durdurmalı  |
+| `/sandbox-add-read-dir` | Ek read-only path izni tanımlamalı          |
+| `/keymap`               | Keyboard shortcut ayarlarını göstermeli     |
+| `/vim`                  | Vim mode’u açmalı/kapatmalı                 |
 
 ---
 
@@ -637,14 +637,14 @@ Learning Plane şunları yapmaz:
 
 Nexus memory objeleri scope’lu olmalıdır.
 
-| Scope | Description |
-|---|---|
-| User Memory | Kullanıcının kişisel tercihleri |
-| Project Memory | Belirli repository/proje bilgileri |
-| Team Memory | Takım kuralları ve workflow normları |
-| Workflow Memory | Tekrarlayan süreçler ve komut zincirleri |
-| Eval Memory | Agent performansı, failure pattern ve benchmark kayıtları |
-| Session Scratch | Sadece aktif oturumda kullanılan geçici bilgiler |
+| Scope           | Description                                               |
+| --------------- | --------------------------------------------------------- |
+| User Memory     | Kullanıcının kişisel tercihleri                           |
+| Project Memory  | Belirli repository/proje bilgileri                        |
+| Team Memory     | Takım kuralları ve workflow normları                      |
+| Workflow Memory | Tekrarlayan süreçler ve komut zincirleri                  |
+| Eval Memory     | Agent performansı, failure pattern ve benchmark kayıtları |
+| Session Scratch | Sadece aktif oturumda kullanılan geçici bilgiler          |
 
 ### 14.3 Learning Modes
 
@@ -655,12 +655,12 @@ mode = "suggest"
 
 Supported modes:
 
-| Mode | Behavior |
-|---|---|
-| `off` | Learning tamamen kapalı |
-| `observe` | Event toplanır, memory yazılmaz |
-| `suggest` | Candidate üretilir, kullanıcı onaylarsa yazılır |
-| `active` | Düşük riskli candidate’lar policy izin verirse otomatik yazılır |
+| Mode      | Behavior                                                        |
+| --------- | --------------------------------------------------------------- |
+| `off`     | Learning tamamen kapalı                                         |
+| `observe` | Event toplanır, memory yazılmaz                                 |
+| `suggest` | Candidate üretilir, kullanıcı onaylarsa yazılır                 |
+| `active`  | Düşük riskli candidate’lar policy izin verirse otomatik yazılır |
 
 Default mode:
 
@@ -941,11 +941,11 @@ Her tool call event olarak kaydedilmelidir:
 
 Nexus şu sandbox modlarını desteklemelidir:
 
-| Mode | Behavior |
-|---|---|
-| `read-only` | Dosya okuma serbest, yazma ve riskli shell kapalı |
-| `workspace-write` | Workspace içinde yazma mümkün, protected paths ve network policy geçerli |
-| `danger-full-access` | Sandbox ve approval kısıtları minimum; sadece izole ortamda önerilir |
+| Mode                 | Behavior                                                                 |
+| -------------------- | ------------------------------------------------------------------------ |
+| `read-only`          | Dosya okuma serbest, yazma ve riskli shell kapalı                        |
+| `workspace-write`    | Workspace içinde yazma mümkün, protected paths ve network policy geçerli |
+| `danger-full-access` | Sandbox ve approval kısıtları minimum; sadece izole ortamda önerilir     |
 
 Default mode:
 
@@ -957,12 +957,12 @@ read-only veya workspace-write, kurulum profiline göre
 
 Supported policies:
 
-| Policy | Behavior |
-|---|---|
-| `always` | Her etkili action için onay ister |
-| `on-request` | Riskli veya policy gerektiren action için onay ister |
-| `on-failure` | Önce sandbox içinde dener, başarısız olursa escalation ister |
-| `never` | Onay sormaz; sadece policy izin verdiği aksiyonları çalıştırır |
+| Policy       | Behavior                                                       |
+| ------------ | -------------------------------------------------------------- |
+| `always`     | Her etkili action için onay ister                              |
+| `on-request` | Riskli veya policy gerektiren action için onay ister           |
+| `on-failure` | Önce sandbox içinde dener, başarısız olursa escalation ister   |
+| `never`      | Onay sormaz; sadece policy izin verdiği aksiyonları çalıştırır |
 
 ### 19.3 Command Risk Scoring
 
@@ -1046,15 +1046,15 @@ Potential providers:
 
 Model router task türüne göre model seçebilmelidir:
 
-| Task | Suggested Model Class |
-|---|---|
-| Planning | High-capability reasoning model |
-| Implementation | Coding-capable model |
-| Review | High-precision reviewer model |
-| Summarization | Fast/cheap model |
-| Classification | Fast/cheap model |
-| Subagent exploration | Fast/cheap model |
-| Security review | High-capability model |
+| Task                 | Suggested Model Class           |
+| -------------------- | ------------------------------- |
+| Planning             | High-capability reasoning model |
+| Implementation       | Coding-capable model            |
+| Review               | High-precision reviewer model   |
+| Summarization        | Fast/cheap model                |
+| Classification       | Fast/cheap model                |
+| Subagent exploration | Fast/cheap model                |
+| Security review      | High-capability model           |
 
 ### 20.3 Provider Policy
 
@@ -1225,13 +1225,13 @@ Enterprise mode’da şu bilgiler audit edilebilmelidir:
 
 Telemetry ayrıştırılmalıdır:
 
-| Class | Description | Default |
-|---|---|---|
+| Class               | Description                            | Default           |
+| ------------------- | -------------------------------------- | ----------------- |
 | Operational metrics | Latency, error count, command duration | Opt-in or minimal |
-| Product analytics | Feature usage | Opt-in |
-| Content telemetry | Prompts, code, tool output | Off by default |
-| Crash reports | Error stack traces | Redacted, opt-in |
-| Enterprise audit | Admin-controlled logs | Policy-controlled |
+| Product analytics   | Feature usage                          | Opt-in            |
+| Content telemetry   | Prompts, code, tool output             | Off by default    |
+| Crash reports       | Error stack traces                     | Redacted, opt-in  |
+| Enterprise audit    | Admin-controlled logs                  | Policy-controlled |
 
 ### 24.3 Retention
 

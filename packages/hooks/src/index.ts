@@ -32,7 +32,9 @@ export interface HookDefinition {
 export class HookRegistry {
   public async list(cwd: string): Promise<HookDefinition[]> {
     await assertSafeNexusRoot(cwd);
-    const content = await readFile(join(cwd, ".nexus", "hooks.json"), "utf8").catch(() => undefined);
+    const content = await readFile(join(cwd, ".nexus", "hooks.json"), "utf8").catch(
+      () => undefined
+    );
     if (!content) {
       return [];
     }
@@ -54,9 +56,13 @@ export class HookRunner {
     if (!input.ctx.config.features.hooks) {
       return 0;
     }
-    const hooks = (await this.registry.list(input.cwd)).filter((hook) => hook.enabled && hook.event === input.point);
+    const hooks = (await this.registry.list(input.cwd)).filter(
+      (hook) => hook.enabled && hook.event === input.point
+    );
     for (const hook of hooks) {
-      const missingPermission = hook.requiredPermissions.find((permission) => !isPermissionAllowed(permission, input.ctx));
+      const missingPermission = hook.requiredPermissions.find(
+        (permission) => !isPermissionAllowed(permission, input.ctx)
+      );
       if (missingPermission) {
         await input.ctx.eventBus.publish(
           createEvent({
@@ -72,7 +78,9 @@ export class HookRunner {
           })
         );
         if (hook.required === true) {
-          throw new Error(`Required hook '${hook.id}' is missing permission '${missingPermission}'.`);
+          throw new Error(
+            `Required hook '${hook.id}' is missing permission '${missingPermission}'.`
+          );
         }
         continue;
       }

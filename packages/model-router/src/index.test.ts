@@ -105,7 +105,10 @@ describe("model router", () => {
   it("denies providers and models outside router policy", async () => {
     const registry = new ModelProviderRegistry();
     registry.register(new TestModelProvider());
-    const router = new DefaultModelRouter(registry, { allowedProviders: ["deepseek"], allowedModels: ["deepseek-v4-flash"] });
+    const router = new DefaultModelRouter(registry, {
+      allowedProviders: ["deepseek"],
+      allowedModels: ["deepseek-v4-flash"]
+    });
 
     await expect(
       router.call({

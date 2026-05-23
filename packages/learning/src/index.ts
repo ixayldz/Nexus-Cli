@@ -17,7 +17,12 @@ import {
 } from "@nexus/shared";
 
 export type LearningCandidateScope = "project" | "user" | "session";
-export type LearningCandidateType = "workflow" | "test-map" | "preference" | "known-failure" | "project-fact";
+export type LearningCandidateType =
+  | "workflow"
+  | "test-map"
+  | "preference"
+  | "known-failure"
+  | "project-fact";
 
 export interface LearningCandidate {
   id: LearningCandidateId;
@@ -114,9 +119,15 @@ export class LearningPlane {
     cwd: string;
     candidateIds?: LearningCandidateId[];
   }): Promise<MemoryEntry[]> {
-    const selectedIds = new Set(input.candidateIds ?? this.state.pendingCandidates.map((candidate) => candidate.id));
-    const acceptedCandidates = this.state.pendingCandidates.filter((candidate) => selectedIds.has(candidate.id));
-    const rejectedCandidates = this.state.pendingCandidates.filter((candidate) => !selectedIds.has(candidate.id));
+    const selectedIds = new Set(
+      input.candidateIds ?? this.state.pendingCandidates.map((candidate) => candidate.id)
+    );
+    const acceptedCandidates = this.state.pendingCandidates.filter((candidate) =>
+      selectedIds.has(candidate.id)
+    );
+    const rejectedCandidates = this.state.pendingCandidates.filter(
+      (candidate) => !selectedIds.has(candidate.id)
+    );
     const entries = acceptedCandidates.map((candidate) => candidateToMemoryEntry(candidate));
 
     await writeMemoryEntries({
@@ -141,7 +152,11 @@ export class LearningPlane {
       );
     }
 
-    for (const [path, scopedEntries] of groupEntriesByPath(input.cwd, this.userMemoryRoot, entries)) {
+    for (const [path, scopedEntries] of groupEntriesByPath(
+      input.cwd,
+      this.userMemoryRoot,
+      entries
+    )) {
       await input.eventBus.publish(
         createEvent({
           sessionId: input.sessionId,
@@ -162,11 +177,17 @@ export class LearningPlane {
     eventBus: EventBus;
     candidateIds?: LearningCandidateId[];
   }): Promise<LearningCandidate[]> {
-    const selectedIds = new Set(input.candidateIds ?? this.state.pendingCandidates.map((candidate) => candidate.id));
-    const rejected = this.state.pendingCandidates.filter((candidate) => selectedIds.has(candidate.id));
+    const selectedIds = new Set(
+      input.candidateIds ?? this.state.pendingCandidates.map((candidate) => candidate.id)
+    );
+    const rejected = this.state.pendingCandidates.filter((candidate) =>
+      selectedIds.has(candidate.id)
+    );
     this.state = {
       ...this.state,
-      pendingCandidates: this.state.pendingCandidates.filter((candidate) => !selectedIds.has(candidate.id))
+      pendingCandidates: this.state.pendingCandidates.filter(
+        (candidate) => !selectedIds.has(candidate.id)
+      )
     };
 
     for (const candidate of rejected) {
@@ -304,7 +325,8 @@ export class LearningPlane {
     sourceEventIds: EventId[]
   ): LearningCandidate | undefined {
     const command =
-      commandsRun.find((item) => /\b(test|typecheck|lint)\b/i.test(item)) ?? context.repository.testCommands[0];
+      commandsRun.find((item) => /\b(test|typecheck|lint)\b/i.test(item)) ??
+      context.repository.testCommands[0];
     if (!command) {
       return undefined;
     }
@@ -346,7 +368,10 @@ export class LearningPlane {
     if (context.memories.user.trim().length > 0) {
       return undefined;
     }
-    const styleHint = context.repository.packageManager === "pnpm" ? "Prefer pnpm commands in this workspace." : undefined;
+    const styleHint =
+      context.repository.packageManager === "pnpm"
+        ? "Prefer pnpm commands in this workspace."
+        : undefined;
     if (!styleHint) {
       return undefined;
     }
@@ -418,7 +443,11 @@ async function writeMemoryEntries(input: {
   }
 }
 
-async function appendMarkdownMemory(path: string, heading: string, entries: MemoryEntry[]): Promise<void> {
+async function appendMarkdownMemory(
+  path: string,
+  heading: string,
+  entries: MemoryEntry[]
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const existing = await readFile(path, "utf8").catch(() => `${heading}\n\n`);
   const block = entries.map(formatMemoryEntry).join("\n");
@@ -426,7 +455,11 @@ async function appendMarkdownMemory(path: string, heading: string, entries: Memo
   await writeFile(path, `${existing}${separator}${block}\n`, "utf8");
 }
 
-async function rewriteMarkdownMemory(cwd: string, userMemoryRoot: string, entries: MemoryEntry[]): Promise<void> {
+async function rewriteMarkdownMemory(
+  cwd: string,
+  userMemoryRoot: string,
+  entries: MemoryEntry[]
+): Promise<void> {
   const projectEntries = entries.filter((entry) => entry.scope === "project");
   const userEntries = entries.filter((entry) => entry.scope === "user");
   await assertSafeProjectLearningRoot(cwd);
@@ -446,9 +479,18 @@ async function rewriteMarkdownMemory(cwd: string, userMemoryRoot: string, entrie
 async function updateProjectStructuredStores(cwd: string, entries: MemoryEntry[]): Promise<void> {
   await assertSafeProjectLearningRoot(cwd);
   const paths = learningStorePaths(cwd);
-  await appendJsonStore(paths.workflowsPath, entries.filter((entry) => entry.type === "workflow"));
-  await appendJsonStore(paths.testMapPath, entries.filter((entry) => entry.type === "test-map"));
-  await appendJsonStore(paths.knownFailuresPath, entries.filter((entry) => entry.type === "known-failure"));
+  await appendJsonStore(
+    paths.workflowsPath,
+    entries.filter((entry) => entry.type === "workflow")
+  );
+  await appendJsonStore(
+    paths.testMapPath,
+    entries.filter((entry) => entry.type === "test-map")
+  );
+  await appendJsonStore(
+    paths.knownFailuresPath,
+    entries.filter((entry) => entry.type === "known-failure")
+  );
 }
 
 async function assertSafeProjectLearningRoot(cwd: string): Promise<void> {
@@ -499,14 +541,19 @@ async function readJsonArray(path: string): Promise<Array<Record<string, string>
   try {
     const parsed = JSON.parse(content) as unknown;
     return Array.isArray(parsed)
-      ? parsed.filter((item): item is Record<string, string> => typeof item === "object" && item !== null)
+      ? parsed.filter(
+          (item): item is Record<string, string> => typeof item === "object" && item !== null
+        )
       : [];
   } catch {
     return [];
   }
 }
 
-async function parseMarkdownMemory(path: string, scope: LearningCandidateScope): Promise<MemoryEntry[]> {
+async function parseMarkdownMemory(
+  path: string,
+  scope: LearningCandidateScope
+): Promise<MemoryEntry[]> {
   const content = await readFile(path, "utf8").catch(() => "");
   return content
     .split(/\r?\n/)

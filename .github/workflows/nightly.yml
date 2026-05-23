@@ -1,0 +1,31 @@
+name: nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "31 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  deepseek-smoke:
+    name: deepseek smoke
+    runs-on: ubuntu-latest
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - if: env.DEEPSEEK_API_KEY != ''
+        run: pnpm verify:external
+      - if: env.DEEPSEEK_API_KEY == ''
+        run: echo "DEEPSEEK_API_KEY is not configured; skipping live provider smoke."

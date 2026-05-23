@@ -5,11 +5,7 @@ import * as readline from "node:readline/promises";
 import { dirname } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { MinimalAgentOrchestrator, SubagentManager } from "@nexus/agent";
-import {
-  type ConfigOverrides,
-  type ResolvedConfig,
-  resolveConfig
-} from "@nexus/config";
+import { type ConfigOverrides, type ResolvedConfig, resolveConfig } from "@nexus/config";
 import { type CompiledContext } from "@nexus/context";
 import { InMemoryEventBus, createEvent, readJsonlEvents } from "@nexus/events";
 import { LearningPlane } from "@nexus/learning";
@@ -52,7 +48,7 @@ import {
   type TuiState
 } from "@nexus/tui";
 
-const VERSION = "0.0.0";
+const VERSION = "0.1.0";
 
 export async function main(argv: string[] = process.argv): Promise<void> {
   const parsed = parseArgs(argv.slice(2));
@@ -293,7 +289,9 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
             return true;
           }
           for (const approval of pending) {
-            output.write(`${approval.id} ${approval.toolName} ${approval.risk}: ${approval.reason}\n`);
+            output.write(
+              `${approval.id} ${approval.toolName} ${approval.risk}: ${approval.reason}\n`
+            );
           }
           return true;
         }
@@ -324,7 +322,9 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
           return true;
         }
         if (intent.type === "config.debug") {
-          const loaded = config.sources.map((source) => `${source.loaded ? "loaded" : "missing"} ${source.path}`);
+          const loaded = config.sources.map(
+            (source) => `${source.loaded ? "loaded" : "missing"} ${source.path}`
+          );
           output.write(`${loaded.join("\n")}\n`);
           return true;
         }
@@ -338,7 +338,11 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
           output.write("Transcript cleared.\n");
           return true;
         }
-        if (intent.type === "session.new" || intent.type === "session.resume" || intent.type === "session.fork") {
+        if (
+          intent.type === "session.new" ||
+          intent.type === "session.resume" ||
+          intent.type === "session.fork"
+        ) {
           if (activeTurn) {
             output.write("Cannot change sessions while a turn is running.\n");
             return true;
@@ -425,7 +429,14 @@ async function runInteractive(parsed: ParsedArgs): Promise<void> {
         if (intent.type === "rollback.start") {
           const rollback = await new RollbackManager().rollback({
             checkpointId: intent.argument || "latest",
-            ctx: createRollbackContext({ session, config, eventBus, services, runtime, nonInteractive: false })
+            ctx: createRollbackContext({
+              session,
+              config,
+              eventBus,
+              services,
+              runtime,
+              nonInteractive: false
+            })
           });
           await runtime.getStorage().writeArtifact("rollbackPath", safeJsonStringify(rollback));
           output.write(
@@ -564,8 +575,14 @@ async function runMcpCommand(parsed: ParsedArgs): Promise<void> {
       process.exitCode = 7;
       return;
     }
-    const updated = await registry.update(cwd, id, { trust: action === "trust" ? "trusted" : "untrusted" });
-    process.stdout.write(updated ? `MCP server ${action === "trust" ? "trusted" : "untrusted"}: ${id}\n` : `MCP server not found: ${id}\n`);
+    const updated = await registry.update(cwd, id, {
+      trust: action === "trust" ? "trusted" : "untrusted"
+    });
+    process.stdout.write(
+      updated
+        ? `MCP server ${action === "trust" ? "trusted" : "untrusted"}: ${id}\n`
+        : `MCP server not found: ${id}\n`
+    );
     return;
   }
   if (action === "allow-tool" || action === "deny-tool") {
@@ -593,7 +610,9 @@ async function runMcpCommand(parsed: ParsedArgs): Promise<void> {
       return;
     }
     const updated = await registry.update(cwd, id, { enabled: action === "enable" });
-    process.stdout.write(updated ? `MCP server ${action}d: ${id}\n` : `MCP server not found: ${id}\n`);
+    process.stdout.write(
+      updated ? `MCP server ${action}d: ${id}\n` : `MCP server not found: ${id}\n`
+    );
     return;
   }
   if (action === "remove") {
@@ -648,16 +667,24 @@ async function runRecognizedTopLevelCommand(parsed: ParsedArgs): Promise<void> {
       process.stdout.write(`${await initializeProject(cwd)}\n`);
       return;
     case "fork":
-      process.stdout.write("Fork is available inside an active session with /fork so parent session metadata is retained.\n");
+      process.stdout.write(
+        "Fork is available inside an active session with /fork so parent session metadata is retained.\n"
+      );
       return;
     case "login":
-      process.stdout.write("Auth is environment/config-file based. Set provider API keys with provider-specific environment variables.\n");
+      process.stdout.write(
+        "Auth is environment/config-file based. Set provider API keys with provider-specific environment variables.\n"
+      );
       return;
     case "logout":
-      process.stdout.write("No persisted CLI login session is active. Remove provider keys from environment or auth files to revoke access.\n");
+      process.stdout.write(
+        "No persisted CLI login session is active. Remove provider keys from environment or auth files to revoke access.\n"
+      );
       return;
     case "completion":
-      process.stdout.write("Shell completion generation is not persisted automatically; use the documented slash commands from nexus --help.\n");
+      process.stdout.write(
+        "Shell completion generation is not persisted automatically; use the documented slash commands from nexus --help.\n"
+      );
       return;
     case "features": {
       const config = await resolveConfig({
@@ -688,22 +715,32 @@ async function runRecognizedTopLevelCommand(parsed: ParsedArgs): Promise<void> {
       return;
     }
     case "ship":
-      process.stdout.write("Ship artifacts are generated inside an active session with /ship after verification and review gates run.\n");
+      process.stdout.write(
+        "Ship artifacts are generated inside an active session with /ship after verification and review gates run.\n"
+      );
       return;
     case "memories":
-      process.stdout.write("Memory management is available inside an active session with /memories.\n");
+      process.stdout.write(
+        "Memory management is available inside an active session with /memories.\n"
+      );
       return;
     case "update":
-      process.stdout.write("Update check complete: this local workspace build does not self-update.\n");
+      process.stdout.write(
+        "Update check complete: this local workspace build does not self-update.\n"
+      );
       return;
     case "apply":
-      process.stdout.write("Apply reads patches from model/tool output inside sessions. Use exec or interactive mode for patch application.\n");
+      process.stdout.write(
+        "Apply reads patches from model/tool output inside sessions. Use exec or interactive mode for patch application.\n"
+      );
       return;
     case "cloud":
       process.stdout.write("Cloud sync is disabled by default for v1.0 local-first operation.\n");
       return;
     case "app-server":
-      process.stdout.write("App server integrations are controlled by configured MCP/app connectors.\n");
+      process.stdout.write(
+        "App server integrations are controlled by configured MCP/app connectors.\n"
+      );
       return;
     default:
       process.stdout.write("Command recognized. Use nexus --help for supported options.\n");
@@ -833,7 +870,11 @@ async function runFullscreenInteractive(inputData: {
   try {
     session =
       inputData.parsed.command === "resume"
-        ? await inputData.runtime.resumeSession({ cwd: inputData.cwd, last: true, mode: "interactive" })
+        ? await inputData.runtime.resumeSession({
+            cwd: inputData.cwd,
+            last: true,
+            mode: "interactive"
+          })
         : await inputData.runtime.startSession({ cwd: inputData.cwd, mode: "interactive" });
     renderer = renderNexusTuiApp({
       state: tuiState,
@@ -887,17 +928,24 @@ async function handleFullscreenIntent(inputData: {
     return true;
   }
   if (intent.type === "model.show") {
-    await inputData.publishMessage(`Active model: ${inputData.config.modelProvider}/${inputData.config.model}`);
+    await inputData.publishMessage(
+      `Active model: ${inputData.config.modelProvider}/${inputData.config.model}`
+    );
     return true;
   }
   if (intent.type === "permissions.show") {
-    await inputData.publishMessage(`Sandbox: ${inputData.config.sandboxMode} | approval: ${inputData.config.approvalPolicy}`);
+    await inputData.publishMessage(
+      `Sandbox: ${inputData.config.sandboxMode} | approval: ${inputData.config.approvalPolicy}`
+    );
     return true;
   }
   if (intent.type === "process.list") {
     const state = inputData.getTuiState();
     const tools = state.activeTools.length > 0 ? state.activeTools.join(", ") : "none";
-    const processes = state.activeProcesses.length > 0 ? state.activeProcesses.map((item) => item.label).join(", ") : "none";
+    const processes =
+      state.activeProcesses.length > 0
+        ? state.activeProcesses.map((item) => item.label).join(", ")
+        : "none";
     await inputData.publishMessage(`Active tools: ${tools}; processes: ${processes}`);
     return true;
   }
@@ -913,7 +961,12 @@ async function handleFullscreenIntent(inputData: {
     await inputData.publishMessage(
       pending.length === 0
         ? "No pending approvals."
-        : pending.map((approval) => `${approval.id} ${approval.toolName} ${approval.risk}: ${approval.reason}`).join("\n")
+        : pending
+            .map(
+              (approval) =>
+                `${approval.id} ${approval.toolName} ${approval.risk}: ${approval.reason}`
+            )
+            .join("\n")
     );
     return true;
   }
@@ -936,12 +989,19 @@ async function handleFullscreenIntent(inputData: {
       await inputData.publishMessage(`Denied ${approval.id}.`);
       return true;
     }
-    await inputData.runtime.approve(approval.id, intent.type === "approval.approve_session" ? "session" : "once");
-    await inputData.publishMessage(`Approved ${approval.id}${intent.type === "approval.approve_session" ? " for session" : ""}.`);
+    await inputData.runtime.approve(
+      approval.id,
+      intent.type === "approval.approve_session" ? "session" : "once"
+    );
+    await inputData.publishMessage(
+      `Approved ${approval.id}${intent.type === "approval.approve_session" ? " for session" : ""}.`
+    );
     return true;
   }
   if (intent.type === "config.debug") {
-    const loaded = inputData.config.sources.map((source) => `${source.loaded ? "loaded" : "missing"} ${source.path}`);
+    const loaded = inputData.config.sources.map(
+      (source) => `${source.loaded ? "loaded" : "missing"} ${source.path}`
+    );
     await inputData.publishMessage(loaded.join("\n"));
     return true;
   }
@@ -953,7 +1013,11 @@ async function handleFullscreenIntent(inputData: {
     inputData.setTuiState(clearTranscript(inputData.getTuiState()));
     return true;
   }
-  if (intent.type === "session.new" || intent.type === "session.resume" || intent.type === "session.fork") {
+  if (
+    intent.type === "session.new" ||
+    intent.type === "session.resume" ||
+    intent.type === "session.fork"
+  ) {
     if (inputData.activeTurn) {
       await inputData.publishMessage("Cannot change sessions while a turn is running.");
       return true;
@@ -962,8 +1026,15 @@ async function handleFullscreenIntent(inputData: {
       intent.type === "session.new"
         ? await inputData.runtime.startSession({ cwd: session.cwd, mode: "interactive" })
         : intent.type === "session.resume"
-          ? await inputData.runtime.resumeSession({ cwd: session.cwd, last: true, mode: "interactive" })
-          : await inputData.runtime.forkSession(session.id, { cwd: session.cwd, mode: "interactive" });
+          ? await inputData.runtime.resumeSession({
+              cwd: session.cwd,
+              last: true,
+              mode: "interactive"
+            })
+          : await inputData.runtime.forkSession(session.id, {
+              cwd: session.cwd,
+              mode: "interactive"
+            });
     inputData.setSession(nextSession);
     await inputData.publishMessage(`Active session: ${nextSession.id}`);
     return true;
@@ -1183,7 +1254,11 @@ async function resolveApprovalRequest(input: {
   if (requested) {
     const match = input.services.approvals
       .list(input.session.id)
-      .find((approval) => approval.id === (requested as unknown as ApprovalRequestId) && approval.status === "pending");
+      .find(
+        (approval) =>
+          approval.id === (requested as unknown as ApprovalRequestId) &&
+          approval.status === "pending"
+      );
     if (match) {
       return match;
     }
@@ -1260,7 +1335,10 @@ async function runPostMutationGates(input: {
     filesChanged: input.result.filesChanged
   });
 
-  if (input.verify || (input.result.filesChanged.length > 0 && input.config.sdlc.requireVerification)) {
+  if (
+    input.verify ||
+    (input.result.filesChanged.length > 0 && input.config.sdlc.requireVerification)
+  ) {
     const command =
       !input.verify || input.verify === "auto"
         ? await detectAutoVerificationCommand(input.session.cwd, input.config)
@@ -1282,7 +1360,9 @@ async function runPostMutationGates(input: {
       command,
       nonInteractive: input.nonInteractive
     });
-    input.result.commandsRun = [...new Set([...input.result.commandsRun, ...verification.commandsRun])];
+    input.result.commandsRun = [
+      ...new Set([...input.result.commandsRun, ...verification.commandsRun])
+    ];
     const report = await input.services.sdlc.verify({
       sessionId: input.session.id,
       eventBus: input.eventBus,
@@ -1291,7 +1371,8 @@ async function runPostMutationGates(input: {
       summary: verification.summary,
       required: true
     });
-    input.result.finalMessage = `${input.result.finalMessage ?? ""}\n\nVerification ${report.status}: ${report.summary}`.trim();
+    input.result.finalMessage =
+      `${input.result.finalMessage ?? ""}\n\nVerification ${report.status}: ${report.summary}`.trim();
     await input.runtime.getStorage().writeArtifact("verificationPath", safeJsonStringify(report));
     if (!verification.passed) {
       input.result.exitCodeHint = 6;
@@ -1321,7 +1402,10 @@ async function runPostMutationGates(input: {
     });
   }
 
-  if (input.result.filesChanged.length > 0 && input.config.sdlc.requireReviewForSecuritySensitiveChanges) {
+  if (
+    input.result.filesChanged.length > 0 &&
+    input.config.sdlc.requireReviewForSecuritySensitiveChanges
+  ) {
     await runLifecycleHooks({
       point: "before_review",
       session: input.session,
@@ -1331,7 +1415,10 @@ async function runPostMutationGates(input: {
       runtime: input.runtime,
       nonInteractive: input.nonInteractive
     });
-    const context = await input.services.context.compile({ cwd: input.session.cwd, config: input.config });
+    const context = await input.services.context.compile({
+      cwd: input.session.cwd,
+      config: input.config
+    });
     const eventDiff = await readRecordedDiff(input.runtime);
     const diff = context.repository.git.diff || eventDiff;
     const review = await input.services.sdlc.review({
@@ -1340,7 +1427,8 @@ async function runPostMutationGates(input: {
       filesChanged: input.result.filesChanged,
       ...(diff ? { diff } : {})
     });
-    input.result.finalMessage = `${input.result.finalMessage ?? ""}\n\nReview ${review.status}: ${review.summary}`.trim();
+    input.result.finalMessage =
+      `${input.result.finalMessage ?? ""}\n\nReview ${review.status}: ${review.summary}`.trim();
     await persistContextArtifact(input.runtime, context);
     if (diff) {
       await input.runtime.getStorage().writeArtifact("diffPatchPath", diff);
@@ -1389,19 +1477,37 @@ async function persistRequestedArtifacts(input: {
   }
 
   const artifacts: Array<{ target: string | undefined; sourcePath: string; fallback?: string }> = [
-    { target: input.parsed.outputPath, sourcePath: storage.artifacts.finalAnswerPath, fallback: "" },
+    {
+      target: input.parsed.outputPath,
+      sourcePath: storage.artifacts.finalAnswerPath,
+      fallback: ""
+    },
     { target: input.parsed.patchPath, sourcePath: storage.artifacts.diffPatchPath, fallback: diff },
-    { target: input.parsed.reportPath, sourcePath: storage.artifacts.verificationPath, fallback: "{}\n" },
+    {
+      target: input.parsed.reportPath,
+      sourcePath: storage.artifacts.verificationPath,
+      fallback: "{}\n"
+    },
     { target: input.parsed.eventsPath, sourcePath: storage.eventLogPath, fallback: "" },
-    { target: input.parsed.reviewReportPath, sourcePath: storage.artifacts.reviewPath, fallback: "{}\n" },
-    { target: input.parsed.learningCandidatesPath, sourcePath: storage.artifacts.learningCandidatesPath, fallback: "[]\n" }
+    {
+      target: input.parsed.reviewReportPath,
+      sourcePath: storage.artifacts.reviewPath,
+      fallback: "{}\n"
+    },
+    {
+      target: input.parsed.learningCandidatesPath,
+      sourcePath: storage.artifacts.learningCandidatesPath,
+      fallback: "[]\n"
+    }
   ];
 
   for (const artifact of artifacts) {
     if (!artifact.target) {
       continue;
     }
-    const content = await readFile(artifact.sourcePath, "utf8").catch(() => artifact.fallback ?? "");
+    const content = await readFile(artifact.sourcePath, "utf8").catch(
+      () => artifact.fallback ?? ""
+    );
     await writeExternalArtifact({
       cwd: input.cwd,
       targetPath: artifact.target,
@@ -1442,7 +1548,10 @@ async function detectAutoVerificationCommand(cwd: string, config: ResolvedConfig
     tools: createDefaultToolBus(),
     security: new SecurityRuntime()
   }).context.compile({ cwd, config });
-  return context.repository.testCommands[0] ?? packageCommandFallback(context.repository.packageManager, "test");
+  return (
+    context.repository.testCommands[0] ??
+    packageCommandFallback(context.repository.packageManager, "test")
+  );
 }
 
 function createRollbackContext(input: {
@@ -1506,12 +1615,16 @@ async function renderMcpStatus(cwd: string): Promise<string> {
   if (servers.length === 0) {
     return "No MCP servers configured.";
   }
-  return servers.map((server) => `${server.id} ${server.enabled ? "enabled" : "disabled"} ${server.transport}`).join("\n");
+  return servers
+    .map((server) => `${server.id} ${server.enabled ? "enabled" : "disabled"} ${server.transport}`)
+    .join("\n");
 }
 
 async function renderSkillsStatus(cwd: string): Promise<string> {
   const skills = await new SkillRegistry().summaries(cwd);
-  return skills.map((skill) => `${skill.id}: ${skill.description}`).join("\n") || "No skills available.";
+  return (
+    skills.map((skill) => `${skill.id}: ${skill.description}`).join("\n") || "No skills available."
+  );
 }
 
 async function renderHooksStatus(cwd: string): Promise<string> {
@@ -1519,7 +1632,9 @@ async function renderHooksStatus(cwd: string): Promise<string> {
   if (hooks.length === 0) {
     return "No hooks configured.";
   }
-  return hooks.map((hook) => `${hook.id} ${hook.enabled ? "enabled" : "disabled"} ${hook.event}`).join("\n");
+  return hooks
+    .map((hook) => `${hook.id} ${hook.enabled ? "enabled" : "disabled"} ${hook.event}`)
+    .join("\n");
 }
 
 async function renderAgentStatus(argument: string | undefined): Promise<string> {
@@ -1614,11 +1729,17 @@ async function initializeProject(cwd: string): Promise<string> {
     );
     created.push("AGENTS.md");
   }
-  return created.length > 0 ? `Initialized project files: ${created.join(", ")}` : "Project already initialized.";
+  return created.length > 0
+    ? `Initialized project files: ${created.join(", ")}`
+    : "Project already initialized.";
 }
 
 async function fileExists(path: string): Promise<boolean> {
-  return Boolean(await readFile(path, "utf8").then(() => true).catch(() => false));
+  return Boolean(
+    await readFile(path, "utf8")
+      .then(() => true)
+      .catch(() => false)
+  );
 }
 
 async function handleSdlcGoalCommand(input: {
@@ -1635,7 +1756,11 @@ async function handleSdlcGoalCommand(input: {
     config: input.config,
     prompt: input.goal
   });
-  await input.sdlcManager.discover({ sessionId: input.session.id, eventBus: input.eventBus, context });
+  await input.sdlcManager.discover({
+    sessionId: input.session.id,
+    eventBus: input.eventBus,
+    context
+  });
   await input.sdlcManager.setGoal({
     sessionId: input.session.id,
     eventBus: input.eventBus,
@@ -1713,7 +1838,8 @@ async function handleSdlcVerifyCommand(input: {
 }): Promise<string> {
   const state = input.sdlcManager.getState();
   const command = input.command || state.plan?.verification[0]?.command;
-  const required = state.plan?.verification.find((item) => item.command === command)?.required ?? true;
+  const required =
+    state.plan?.verification.find((item) => item.command === command)?.required ?? true;
   if (!command) {
     const report = await input.sdlcManager.verify({
       sessionId: input.session.id,
@@ -1723,7 +1849,9 @@ async function handleSdlcVerifyCommand(input: {
       required: false
     });
     await input.runtime.getStorage().writeArtifact("verificationPath", safeJsonStringify(report));
-    await persistSdlcManifest(input.runtime, input.sdlcManager, { verificationStatus: report.status });
+    await persistSdlcManifest(input.runtime, input.sdlcManager, {
+      verificationStatus: report.status
+    });
     return "Verification skipped: no command is available.";
   }
 
@@ -1755,7 +1883,9 @@ async function handleSdlcVerifyCommand(input: {
     required
   });
   await input.runtime.getStorage().writeArtifact("verificationPath", safeJsonStringify(report));
-  await persistSdlcManifest(input.runtime, input.sdlcManager, { verificationStatus: report.status });
+  await persistSdlcManifest(input.runtime, input.sdlcManager, {
+    verificationStatus: report.status
+  });
   await runLifecycleHooks({
     point: "after_verify",
     session: input.session,
@@ -1778,11 +1908,17 @@ async function handleSdlcReviewCommand(input: {
   filesChanged: string[];
   diff?: string;
 }): Promise<string> {
-  const context = await input.services.context.compile({ cwd: input.session.cwd, config: input.config });
+  const context = await input.services.context.compile({
+    cwd: input.session.cwd,
+    config: input.config
+  });
   const diff = input.diff ?? context.repository.git.diff;
   const eventDiff = await readRecordedDiff(input.runtime);
   const effectiveDiff = diff || eventDiff;
-  const filesChanged = input.filesChanged.length > 0 ? input.filesChanged : filesChangedFromGitStatus(context.repository.git.status);
+  const filesChanged =
+    input.filesChanged.length > 0
+      ? input.filesChanged
+      : filesChangedFromGitStatus(context.repository.git.status);
   await runLifecycleHooks({
     point: "before_review",
     session: input.session,
@@ -1843,7 +1979,8 @@ async function handleShipCommand(input: {
     eventBus: input.eventBus,
     filesChanged: input.filesChanged,
     commandsRun: input.commandsRun,
-    rollbackNote: "Use the session rollback artifact or the recorded diff patch to revert this release candidate."
+    rollbackNote:
+      "Use the session rollback artifact or the recorded diff patch to revert this release candidate."
   });
   await input.runtime.getStorage().writeArtifact(
     "shipPath",
@@ -1854,7 +1991,9 @@ async function handleShipCommand(input: {
     })
   );
   await persistSdlcManifest(input.runtime, input.sdlcManager, {
-    ...(artifact.verificationStatus !== "missing" ? { verificationStatus: artifact.verificationStatus } : {}),
+    ...(artifact.verificationStatus !== "missing"
+      ? { verificationStatus: artifact.verificationStatus }
+      : {}),
     ...(artifact.reviewStatus !== "missing" ? { reviewStatus: artifact.reviewStatus } : {})
   });
   return `${artifact.status === "ready" ? "Ship ready" : "Ship blocked"}: ${artifact.summary}\nArtifact: ${
@@ -1873,7 +2012,10 @@ async function handleContextCompactCommand(input: {
   commandsRun: string[];
   filesChanged: string[];
 }): Promise<string> {
-  const context = await input.services.context.compile({ cwd: input.session.cwd, config: input.config });
+  const context = await input.services.context.compile({
+    cwd: input.session.cwd,
+    config: input.config
+  });
   const candidates = await input.learningPlane.generateCandidates({
     sessionId: input.session.id,
     eventBus: input.eventBus,
@@ -1896,7 +2038,9 @@ async function handleContextCompactCommand(input: {
       candidates
     })
   );
-  await persistSdlcManifest(input.runtime, input.sdlcManager, { learningCandidateCount: candidates.length });
+  await persistSdlcManifest(input.runtime, input.sdlcManager, {
+    learningCandidateCount: candidates.length
+  });
   return `Compacted context into ${candidates.length} memory candidate(s).`;
 }
 
@@ -1982,7 +2126,10 @@ async function createModelReviewFindings(input: {
   }
 }
 
-async function persistContextArtifact(runtime: NexusRuntime, context: CompiledContext): Promise<void> {
+async function persistContextArtifact(
+  runtime: NexusRuntime,
+  context: CompiledContext
+): Promise<void> {
   await runtime.getStorage().writeArtifact(
     "contextSummaryPath",
     safeJsonStringify({
@@ -1998,7 +2145,9 @@ async function persistContextArtifact(runtime: NexusRuntime, context: CompiledCo
         git: {
           available: context.repository.git.available,
           branch: context.repository.git.branch,
-          statusLineCount: context.repository.git.status.split(/\r?\n/).filter((line) => line.trim()).length,
+          statusLineCount: context.repository.git.status
+            .split(/\r?\n/)
+            .filter((line) => line.trim()).length,
           diffBytes: Buffer.byteLength(context.repository.git.diff, "utf8")
         },
         repoMap: {
@@ -2057,13 +2206,17 @@ function normalizeModelPlanSuggestion(value: unknown): ModelPlanSuggestion | und
           return undefined;
         }
         const severity =
-          risk.severity === "low" || risk.severity === "medium" || risk.severity === "high" ? risk.severity : undefined;
+          risk.severity === "low" || risk.severity === "medium" || risk.severity === "high"
+            ? risk.severity
+            : undefined;
         return {
           text: risk.text,
           ...(severity ? { severity } : {})
         };
       })
-      .filter((risk): risk is { text: string; severity?: "low" | "medium" | "high" } => Boolean(risk)),
+      .filter((risk): risk is { text: string; severity?: "low" | "medium" | "high" } =>
+        Boolean(risk)
+      ),
     verification: readJsonArray(value.verification)
       .map((item) => {
         if (typeof item === "string") {
@@ -2078,7 +2231,9 @@ function normalizeModelPlanSuggestion(value: unknown): ModelPlanSuggestion | und
           ...(typeof item.reason === "string" ? { reason: item.reason } : {})
         };
       })
-      .filter((item): item is { command: string; required?: boolean; reason?: string } => Boolean(item)),
+      .filter((item): item is { command: string; required?: boolean; reason?: string } =>
+        Boolean(item)
+      ),
     approvalRequirements: readJsonStringArray(value.approvalRequirements),
     files: readJsonStringArray(value.files)
   };
@@ -2088,7 +2243,11 @@ function normalizeModelReviewFindings(value: unknown): ReviewFinding[] {
   const findings = isRecord(value) ? readJsonArray(value.findings) : [];
   return findings
     .map((item, index) => {
-      if (!isRecord(item) || typeof item.title !== "string" || typeof item.description !== "string") {
+      if (
+        !isRecord(item) ||
+        typeof item.title !== "string" ||
+        typeof item.description !== "string"
+      ) {
         return undefined;
       }
       const severity = normalizeSeverity(item.severity);
@@ -2108,7 +2267,10 @@ function normalizeModelReviewFindings(value: unknown): ReviewFinding[] {
 }
 
 function extractJsonObject(text: string): unknown {
-  const withoutFence = text.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const withoutFence = text
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
   try {
     return JSON.parse(withoutFence) as unknown;
   } catch {
@@ -2138,11 +2300,19 @@ function readJsonArray(value: unknown): unknown[] {
 }
 
 function readJsonStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function normalizeSeverity(value: unknown): ReviewFinding["severity"] {
-  if (value === "critical" || value === "high" || value === "medium" || value === "low" || value === "info") {
+  if (
+    value === "critical" ||
+    value === "high" ||
+    value === "medium" ||
+    value === "low" ||
+    value === "info"
+  ) {
     return value;
   }
   return "medium";
@@ -2170,7 +2340,8 @@ async function handleMemoriesIntent(input: {
   const action = input.action?.trim().toLowerCase() ?? "";
   const parts = action.split(/\s+/).filter(Boolean);
   if (parts[0] === "accept") {
-    const candidateIds = parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
+    const candidateIds =
+      parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
     const entries = await input.learningPlane.acceptPending({
       sessionId: input.session.id,
       eventBus: input.eventBus,
@@ -2181,7 +2352,8 @@ async function handleMemoriesIntent(input: {
     return;
   }
   if (parts[0] === "reject") {
-    const candidateIds = parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
+    const candidateIds =
+      parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
     const rejected = await input.learningPlane.rejectPending({
       sessionId: input.session.id,
       eventBus: input.eventBus,
@@ -2220,7 +2392,9 @@ async function handleMemoriesIntent(input: {
     return;
   }
   if (parts[0] === "export") {
-    output.write(`${safeJsonStringify(await input.learningPlane.listMemories(input.session.cwd))}\n`);
+    output.write(
+      `${safeJsonStringify(await input.learningPlane.listMemories(input.session.cwd))}\n`
+    );
     return;
   }
   if (parts[0] === "audit") {
@@ -2257,7 +2431,8 @@ async function handleMemoriesIntentForMessage(input: {
   const action = input.action?.trim().toLowerCase() ?? "";
   const parts = action.split(/\s+/).filter(Boolean);
   if (parts[0] === "accept") {
-    const candidateIds = parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
+    const candidateIds =
+      parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
     const entries = await input.learningPlane.acceptPending({
       sessionId: input.session.id,
       eventBus: input.eventBus,
@@ -2267,7 +2442,8 @@ async function handleMemoriesIntentForMessage(input: {
     return `Accepted ${entries.length} memory entr${entries.length === 1 ? "y" : "ies"}.`;
   }
   if (parts[0] === "reject") {
-    const candidateIds = parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
+    const candidateIds =
+      parts[1] && parts[1] !== "all" ? [parts[1] as LearningCandidateId] : undefined;
     const rejected = await input.learningPlane.rejectPending({
       sessionId: input.session.id,
       eventBus: input.eventBus,
@@ -2327,7 +2503,11 @@ async function handleMemoriesIntentForMessage(input: {
   return lines.join("\n");
 }
 
-function recordTurnResult(result: TurnResult, filesChanged: Set<string>, commandsRun: Set<string>): void {
+function recordTurnResult(
+  result: TurnResult,
+  filesChanged: Set<string>,
+  commandsRun: Set<string>
+): void {
   for (const file of result.filesChanged) {
     filesChanged.add(file);
   }
@@ -2341,7 +2521,9 @@ function readString(value: unknown): string | undefined {
 }
 
 function readStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function readOutputStatus(outputValue: unknown): string | undefined {
@@ -2356,7 +2538,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-type ParsedCommand = "exec" | "help" | "version" | "interactive" | "resume" | "mcp" | "skills" | "hooks" | "stub";
+type ParsedCommand =
+  | "exec"
+  | "help"
+  | "version"
+  | "interactive"
+  | "resume"
+  | "mcp"
+  | "skills"
+  | "hooks"
+  | "stub";
 
 interface ParsedArgs {
   command: ParsedCommand;
@@ -2406,7 +2597,9 @@ function parseArgs(args: string[]): ParsedArgs {
     if (!commandSelected && isKnownCommand(arg)) {
       commandSelected = true;
       parseState.command =
-        arg === "exec" || arg === "resume" || arg === "mcp" || arg === "skills" || arg === "hooks" ? arg : "stub";
+        arg === "exec" || arg === "resume" || arg === "mcp" || arg === "skills" || arg === "hooks"
+          ? arg
+          : "stub";
       if (parseState.command === "stub") {
         parseState.stubCommand = arg;
       }
@@ -2453,7 +2646,9 @@ function parseArgs(args: string[]): ParsedArgs {
     }
 
     if (arg === "--ask-for-approval") {
-      parseState.overrides.approvalPolicy = parseApprovalPolicy(readFlagValue(args, (index += 1), arg));
+      parseState.overrides.approvalPolicy = parseApprovalPolicy(
+        readFlagValue(args, (index += 1), arg)
+      );
       continue;
     }
 

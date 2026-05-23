@@ -346,7 +346,10 @@ export class DefaultModelRouter {
   }
 }
 
-export function normalizeModelProviderError(providerId: string, error: unknown): ModelProviderError {
+export function normalizeModelProviderError(
+  providerId: string,
+  error: unknown
+): ModelProviderError {
   if (error instanceof ModelProviderError) {
     return error;
   }
@@ -442,7 +445,11 @@ export function nexusToolDefinitions(): ModelToolDefinition[] {
   ];
 }
 
-function toolDefinition(name: string, description: string, parameters: Record<string, unknown>): ModelToolDefinition {
+function toolDefinition(
+  name: string,
+  description: string,
+  parameters: Record<string, unknown>
+): ModelToolDefinition {
   return { name, description, parameters };
 }
 

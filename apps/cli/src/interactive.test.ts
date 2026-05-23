@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+
+const cliPath = resolve("apps/cli/src/main.ts");
+const tsxCliPath = resolve("node_modules/tsx/dist/cli.mjs");
 
 describe("interactive cli", () => {
   it("starts interactive mode and handles status/quit slash commands", async () => {
@@ -69,11 +72,25 @@ function runInteractive(
   cwd = process.cwd()
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [join(process.cwd(), "apps/cli/dist/main.js"), ...args], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
-    });
+    const child = spawn(
+      process.execPath,
+      [
+        tsxCliPath,
+        "--tsconfig",
+        "apps/cli/tsconfig.json",
+        cliPath,
+        "--profile",
+        "fake",
+        "--cd",
+        cwd,
+        ...args
+      ],
+      {
+        cwd: process.cwd(),
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true
+      }
+    );
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {

@@ -26,7 +26,9 @@ export class FakeModelProvider implements ModelProvider {
       };
     }
 
-    const latestUserMessage = [...input.messages].reverse().find((message) => message.role === "user");
+    const latestUserMessage = [...input.messages]
+      .reverse()
+      .find((message) => message.role === "user");
     const text = latestUserMessage?.content ?? "";
     if (/read\s+package\.json/i.test(text)) {
       return {
@@ -94,7 +96,7 @@ export class FakeModelProvider implements ModelProvider {
             name: "file.write",
             input: {
               path: "src/hello.ts",
-              content: "export function hello(): string {\n  return \"hello\";\n}\n",
+              content: 'export function hello(): string {\n  return "hello";\n}\n',
               createDirs: true
             },
             reason: "Exercise safe file mutation through Tool Bus."
@@ -112,9 +114,13 @@ export class FakeModelProvider implements ModelProvider {
             id: createId("tool") as unknown as ToolCallId,
             name: "patch.apply",
             input: {
-              patch: ["--- a/patch-target.txt", "+++ b/patch-target.txt", "@@ -1,1 +1,1 @@", "-old", "+new"].join(
-                "\n"
-              )
+              patch: [
+                "--- a/patch-target.txt",
+                "+++ b/patch-target.txt",
+                "@@ -1,1 +1,1 @@",
+                "-old",
+                "+new"
+              ].join("\n")
             },
             reason: "Exercise patch application through Tool Bus."
           }
@@ -154,7 +160,11 @@ function summarizeFileObservation(output: unknown): string {
   }
 
   try {
-    const parsed = JSON.parse(output.content) as { name?: unknown; version?: unknown; scripts?: unknown };
+    const parsed = JSON.parse(output.content) as {
+      name?: unknown;
+      version?: unknown;
+      scripts?: unknown;
+    };
     const name = typeof parsed.name === "string" ? parsed.name : "unknown";
     const version = typeof parsed.version === "string" ? parsed.version : "unknown";
     const scriptCount = isRecord(parsed.scripts) ? Object.keys(parsed.scripts).length : 0;

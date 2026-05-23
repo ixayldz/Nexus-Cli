@@ -1,8 +1,30 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist"
+    "baseUrl": "../..",
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "paths": {
+      "@nexus/agent": ["packages/agent/src/index.ts"],
+      "@nexus/config": ["packages/config/src/index.ts"],
+      "@nexus/context": ["packages/context/src/index.ts"],
+      "@nexus/events": ["packages/events/src/index.ts"],
+      "@nexus/hooks": ["packages/hooks/src/index.ts"],
+      "@nexus/learning": ["packages/learning/src/index.ts"],
+      "@nexus/mcp": ["packages/mcp/src/index.ts"],
+      "@nexus/model-router": ["packages/model-router/src/index.ts"],
+      "@nexus/provider-deepseek": ["packages/providers/deepseek/src/index.ts"],
+      "@nexus/provider-openai": ["packages/providers/openai/src/index.ts"],
+      "@nexus/runtime": ["packages/runtime/src/index.ts"],
+      "@nexus/sandbox": ["packages/sandbox/src/index.ts"],
+      "@nexus/sdlc": ["packages/sdlc/src/index.ts"],
+      "@nexus/security": ["packages/security/src/index.ts"],
+      "@nexus/shared": ["packages/shared/src/index.ts"],
+      "@nexus/skills": ["packages/skills/src/index.ts"],
+      "@nexus/test-utils": ["packages/test-utils/src/index.ts"],
+      "@nexus/tool-bus": ["packages/tool-bus/src/index.ts"],
+      "@nexus/tui": ["packages/tui/src/index.tsx"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

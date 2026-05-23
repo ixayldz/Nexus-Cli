@@ -9,14 +9,17 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "package.json"],
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@nexus/shared": "workspace:*",
-    "smol-toml": "^1.4.2",
+    "smol-toml": "^1.6.1",
     "zod": "^4.1.12"
   }
 }

@@ -1,10 +1,10 @@
 # Nexus CLI Kullanim Rehberi
 
-Bu dokuman Nexus CLI'i bu repo icinden local olarak nasil calistiracagini anlatir.
+Bu dokuman Nexus CLI'i local build, DeepSeek provider ve npm paketi uzerinden nasil calistiracagini anlatir.
 
 Nexus, terminal uzerinden repo context'ini okuyan, plan cikaran, dosya degistirebilen, test calistirabilen, review yapan, artifact uretebilen ve session/event log tutan agentic coding CLI runtime'dir.
 
-> Not: Bu asamada ana local kullanim `node apps/cli/dist/main.js` uzerindendir. Global `npm install -g` akisina guvenme; once repo icinde build al.
+> Not: Local gelistirmede `node apps/cli/dist/main.js` kullan. Release sonrasi global kurulum hedefi `npm install -g @ixayldz/nexus-cli` ve binary adi `nexus`.
 
 ## 1. Gereksinimler
 
@@ -40,10 +40,10 @@ node apps/cli/dist/main.js --version
 Beklenen version ciktisi:
 
 ```text
-0.0.0
+0.1.0
 ```
 
-Bu normaldir. Paket henuz publish/version release akisina alinmadigi icin local build version `0.0.0` doner.
+Bu version `apps/cli/package.json` icindeki public CLI package version'i ile ayni tutulur.
 
 ## 3. En Temel Komutlar
 
@@ -63,6 +63,12 @@ TUI acmadan tek seferlik non-interactive calistir:
 
 ```powershell
 node apps/cli/dist/main.js exec "package.json dosyasini oku ve ozetle"
+```
+
+Bu komut varsayilan olarak DeepSeek kullanir. Canli model kullanmadan deterministik local test yapmak istersen explicit fake profilini sec:
+
+```powershell
+node apps/cli/dist/main.js exec --profile fake "package.json dosyasini oku ve ozetle"
 ```
 
 JSONL event stream ile calistir:
@@ -93,10 +99,10 @@ PowerShell'de API key set et:
 $env:DEEPSEEK_API_KEY="deepseek_api_key_buraya"
 ```
 
-DeepSeek profiliyle basit test:
+DeepSeek ile basit test:
 
 ```powershell
-node apps/cli/dist/main.js exec --profile deepseek "Kisaca hello de"
+node apps/cli/dist/main.js exec "Kisaca hello de"
 ```
 
 Provider smoke test:
@@ -335,17 +341,17 @@ node apps/cli/dist/main.js exec `
 
 Non-interactive modda cikis kodlari onemlidir:
 
-| Kod | Anlam |
-|---:|---|
-| 0 | Basarili |
-| 1 | Genel hata |
-| 2 | Approval gerekli ama ortam non-interactive |
-| 3 | Sandbox hatasi veya sandbox unavailable |
-| 4 | Model/provider hatasi |
-| 5 | Tool/security/network hatasi |
-| 6 | Verification failed |
-| 7 | Config hatasi |
-| 8 | Auth hatasi |
+| Kod | Anlam                                      |
+| --: | ------------------------------------------ |
+|   0 | Basarili                                   |
+|   1 | Genel hata                                 |
+|   2 | Approval gerekli ama ortam non-interactive |
+|   3 | Sandbox hatasi veya sandbox unavailable    |
+|   4 | Model/provider hatasi                      |
+|   5 | Tool/security/network hatasi               |
+|   6 | Verification failed                        |
+|   7 | Config hatasi                              |
+|   8 | Auth hatasi                                |
 
 PowerShell'de son exit code:
 
@@ -554,7 +560,7 @@ Kod kalitesini kontrol et:
 ```powershell
 pnpm lint
 pnpm typecheck
-pnpm test
+pnpm test:coverage
 ```
 
 Eval komutlari:
@@ -562,7 +568,7 @@ Eval komutlari:
 ```powershell
 pnpm eval:baseline
 pnpm eval:security
-pnpm provider:smoke
+pnpm verify:external
 ```
 
 Package/release kontrolleri:
@@ -575,15 +581,21 @@ pnpm verify:release
 `verify:release` zinciri sunlari calistirir:
 
 ```text
-build
-test
+format:check
 lint
 typecheck
+test:coverage
+build
 eval:baseline
 eval:security
-provider:smoke
 verify:package
 release-verify
+```
+
+Canli DeepSeek smoke test ayridir:
+
+```powershell
+pnpm verify:external
 ```
 
 ## 14. Ilk Deneme Senaryosu
@@ -595,7 +607,7 @@ cd C:\Users\ixayl\Desktop\nexus
 pnpm install
 pnpm build
 node apps/cli/dist/main.js --version
-node apps/cli/dist/main.js exec "package.json dosyasini oku ve ozetle"
+node apps/cli/dist/main.js exec --profile fake "package.json dosyasini oku ve ozetle"
 node apps/cli/dist/main.js sandbox doctor
 pnpm verify:release
 ```
@@ -605,14 +617,14 @@ DeepSeek ile canli deneme:
 ```powershell
 $env:DEEPSEEK_API_KEY="deepseek_api_key_buraya"
 pnpm provider:smoke
-node apps/cli/dist/main.js exec --profile deepseek "Bu repoyu kisaca analiz et"
+node apps/cli/dist/main.js exec "Bu repoyu kisaca analiz et"
 ```
 
 ## 15. Sik Karsilasilan Durumlar
 
-### `--version` sadece `0.0.0` donuyor
+### `--version` sadece eski version donuyor
 
-Normal. Local workspace version henuz release/publish akisina alinmamis.
+Eski `dist` dosyasi calisiyor olabilir. `pnpm build` calistir ve tekrar dene.
 
 ### `DEEPSEEK_API_KEY is not set`
 
@@ -665,4 +677,3 @@ pnpm verify:package
 ```
 
 Bu komut npm pack dry-run kontrolunu release safety gate icinde calistirir.
-

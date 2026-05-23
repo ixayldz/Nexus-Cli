@@ -198,10 +198,16 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       next.transcript.push({ kind: "user", text: readString(event, "text") ?? "" });
       break;
     case "assistant.message":
-      next.transcript.push({ kind: "assistant", text: collapseLongText(readString(event, "text") ?? "") });
+      next.transcript.push({
+        kind: "assistant",
+        text: collapseLongText(readString(event, "text") ?? "")
+      });
       break;
     case "assistant.delta":
-      next.transcript.push({ kind: "assistant", text: collapseLongText(readString(event, "text") ?? "") });
+      next.transcript.push({
+        kind: "assistant",
+        text: collapseLongText(readString(event, "text") ?? "")
+      });
       break;
     case "model.call.started":
       assignString(event, "model", (value) => {
@@ -263,7 +269,10 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       next.transcript.push({ kind: "approval", text: event.type });
       break;
     case "sandbox.unavailable":
-      next.transcript.push({ kind: "error", text: `Sandbox unavailable: ${readString(event, "reason") ?? ""}` });
+      next.transcript.push({
+        kind: "error",
+        text: `Sandbox unavailable: ${readString(event, "reason") ?? ""}`
+      });
       break;
     case "file.read":
       next.transcript.push({
@@ -275,16 +284,28 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       assignString(event, "diff", (value) => {
         next.lastDiff = value;
       });
-      next.transcript.push({ kind: "file", text: `Changed ${readString(event, "path") ?? "file"}` });
+      next.transcript.push({
+        kind: "file",
+        text: `Changed ${readString(event, "path") ?? "file"}`
+      });
       break;
     case "rollback.started":
-      next.transcript.push({ kind: "file", text: `Rollback started: ${readString(event, "checkpointId") ?? "latest"}` });
+      next.transcript.push({
+        kind: "file",
+        text: `Rollback started: ${readString(event, "checkpointId") ?? "latest"}`
+      });
       break;
     case "rollback.completed":
-      next.transcript.push({ kind: "file", text: `Rollback completed: ${readString(event, "checkpointId") ?? ""}` });
+      next.transcript.push({
+        kind: "file",
+        text: `Rollback completed: ${readString(event, "checkpointId") ?? ""}`
+      });
       break;
     case "rollback.refused":
-      next.transcript.push({ kind: "error", text: `Rollback refused: ${readString(event, "refusedReason") ?? "policy denied"}` });
+      next.transcript.push({
+        kind: "error",
+        text: `Rollback refused: ${readString(event, "refusedReason") ?? "policy denied"}`
+      });
       break;
     case "shell.started": {
       const command = readString(event, "command") ?? "shell command";
@@ -295,7 +316,11 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
     case "shell.output": {
       const text = readString(event, "text");
       if (text) {
-        next.transcript.push({ kind: "shell", text: collapseLongText(text), collapsed: text.length > 240 });
+        next.transcript.push({
+          kind: "shell",
+          text: collapseLongText(text),
+          collapsed: text.length > 240
+        });
       }
       break;
     }
@@ -312,16 +337,25 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       assignString(event, "branch", (value) => {
         next.branch = value;
       });
-      next.transcript.push({ kind: "git", text: `${event.type} exit ${String(readUnknown(event, "exitCode") ?? "?")}` });
+      next.transcript.push({
+        kind: "git",
+        text: `${event.type} exit ${String(readUnknown(event, "exitCode") ?? "?")}`
+      });
       break;
     case "git.diff":
       assignString(event, "diff", (value) => {
         next.lastDiff = value;
       });
-      next.transcript.push({ kind: "git", text: `${event.type} exit ${String(readUnknown(event, "exitCode") ?? "?")}` });
+      next.transcript.push({
+        kind: "git",
+        text: `${event.type} exit ${String(readUnknown(event, "exitCode") ?? "?")}`
+      });
       break;
     case "git.log":
-      next.transcript.push({ kind: "git", text: `${event.type} exit ${String(readUnknown(event, "exitCode") ?? "?")}` });
+      next.transcript.push({
+        kind: "git",
+        text: `${event.type} exit ${String(readUnknown(event, "exitCode") ?? "?")}`
+      });
       break;
     case "search.completed":
       next.transcript.push({
@@ -351,7 +385,10 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       break;
     }
     case "sdlc.stage.blocked":
-      next.transcript.push({ kind: "sdlc", text: `Stage blocked: ${readString(event, "reason") ?? "unknown"}` });
+      next.transcript.push({
+        kind: "sdlc",
+        text: `Stage blocked: ${readString(event, "reason") ?? "unknown"}`
+      });
       break;
     case "plan.updated":
       next.sdlcStage = "plan";
@@ -380,24 +417,39 @@ export function reduceTuiEvent(state: TuiState, event: NexusEvent): TuiState {
       break;
     case "learning.candidate.created":
       next.pendingLearningCandidates += 1;
-      next.transcript.push({ kind: "learning", text: renderLearningCandidate(readUnknown(event, "candidate")) });
+      next.transcript.push({
+        kind: "learning",
+        text: renderLearningCandidate(readUnknown(event, "candidate"))
+      });
       break;
     case "learning.candidate.accepted":
       next.pendingLearningCandidates = Math.max(0, next.pendingLearningCandidates - 1);
-      next.transcript.push({ kind: "learning", text: `Accepted memory candidate ${readString(event, "candidateId") ?? ""}` });
+      next.transcript.push({
+        kind: "learning",
+        text: `Accepted memory candidate ${readString(event, "candidateId") ?? ""}`
+      });
       break;
     case "learning.candidate.rejected":
       next.pendingLearningCandidates = Math.max(0, next.pendingLearningCandidates - 1);
-      next.transcript.push({ kind: "learning", text: `Rejected memory candidate ${readString(event, "candidateId") ?? ""}` });
+      next.transcript.push({
+        kind: "learning",
+        text: `Rejected memory candidate ${readString(event, "candidateId") ?? ""}`
+      });
       break;
     case "memory.written":
-      next.transcript.push({ kind: "learning", text: `Memory written: ${readString(event, "path") ?? "project memory"}` });
+      next.transcript.push({
+        kind: "learning",
+        text: `Memory written: ${readString(event, "path") ?? "project memory"}`
+      });
       break;
     case "session.completed":
       next.transcript.push({ kind: "session", text: "Session turn completed" });
       break;
     case "error":
-      next.transcript.push({ kind: "error", text: readString(event, "message") ?? "Unknown error" });
+      next.transcript.push({
+        kind: "error",
+        text: readString(event, "message") ?? "Unknown error"
+      });
       break;
     default:
       break;
@@ -529,7 +581,8 @@ export function NexusTuiApp(props: NexusTuiAppProps): ReactElement {
   const [paletteIndex, setPaletteIndex] = useState(0);
   const paletteOpen = composer.trimStart().startsWith("/");
   const paletteItems = useMemo(() => filterSlashCommands(composer), [composer]);
-  const selectedCommand = paletteItems[Math.min(paletteIndex, Math.max(0, paletteItems.length - 1))];
+  const selectedCommand =
+    paletteItems[Math.min(paletteIndex, Math.max(0, paletteItems.length - 1))];
 
   useInput((inputText, key) => {
     if (key.ctrl && inputText === "c") {
@@ -595,11 +648,18 @@ export function NexusTuiApp(props: NexusTuiAppProps): ReactElement {
             {...(props.state.pendingApproval ? { card: props.state.pendingApproval } : {})}
             {...(props.onIntent ? { onIntent: props.onIntent } : {})}
           />
-          <ProcessPanel processes={props.state.activeProcesses} activeTools={props.state.activeTools} />
+          <ProcessPanel
+            processes={props.state.activeProcesses}
+            activeTools={props.state.activeTools}
+          />
           <MemoryPanel pendingCount={props.state.pendingLearningCandidates} />
         </Box>
       </Box>
-      <SlashCommandPalette open={paletteOpen} commands={paletteItems} selectedIndex={paletteIndex} />
+      <SlashCommandPalette
+        open={paletteOpen}
+        commands={paletteItems}
+        selectedIndex={paletteIndex}
+      />
       <Composer value={composer} disabled={props.isRunning === true} />
     </Box>
   );
@@ -695,7 +755,9 @@ export function ApprovalCardView(input: {
           deny
         </Text>
       </Box>
-      <Text color="gray">/approve {requestId} | /approve-session {requestId} | /deny {requestId}</Text>
+      <Text color="gray">
+        /approve {requestId} | /approve-session {requestId} | /deny {requestId}
+      </Text>
     </Box>
   );
 }
@@ -729,11 +791,16 @@ export function StatusLine(input: { state: TuiState }): ReactElement {
   );
 }
 
-export function ProcessPanel(input: { processes: ProcessCard[]; activeTools: string[] }): ReactElement {
+export function ProcessPanel(input: {
+  processes: ProcessCard[];
+  activeTools: string[];
+}): ReactElement {
   return (
     <Box borderStyle="single" flexDirection="column" paddingX={1}>
       <Text bold>Processes</Text>
-      {input.activeTools.length === 0 && input.processes.length === 0 ? <Text color="gray">Idle.</Text> : null}
+      {input.activeTools.length === 0 && input.processes.length === 0 ? (
+        <Text color="gray">Idle.</Text>
+      ) : null}
       {input.activeTools.map((tool) => (
         <Text key={`tool-${tool}`}>tool: {tool}</Text>
       ))}
@@ -854,7 +921,10 @@ function assignString(event: NexusEvent, key: string, assign: (value: string) =>
   }
 }
 
-function readString(event: NexusEvent | Record<string, unknown> | undefined, key: string): string | undefined {
+function readString(
+  event: NexusEvent | Record<string, unknown> | undefined,
+  key: string
+): string | undefined {
   const value = event?.[key];
   return typeof value === "string" ? value : undefined;
 }
@@ -889,7 +959,8 @@ function renderLearningCandidate(candidate: unknown): string {
   const value = candidate as { type?: unknown; text?: unknown; confidence?: unknown };
   const type = typeof value.type === "string" ? value.type : "memory";
   const text = typeof value.text === "string" ? value.text : "candidate";
-  const confidence = typeof value.confidence === "number" ? ` (${Math.round(value.confidence * 100)}%)` : "";
+  const confidence =
+    typeof value.confidence === "number" ? ` (${Math.round(value.confidence * 100)}%)` : "";
   return `Learning candidate [${type}]${confidence}: ${text}`;
 }
 
@@ -900,7 +971,9 @@ function collapseLongText(text: string): string {
   return `${text.slice(0, 220)}... (${text.length - 220} more chars)`;
 }
 
-function colorForEntry(kind: TuiTranscriptEntry["kind"]): "blue" | "green" | "yellow" | "red" | "cyan" | "gray" | undefined {
+function colorForEntry(
+  kind: TuiTranscriptEntry["kind"]
+): "blue" | "green" | "yellow" | "red" | "cyan" | "gray" | undefined {
   switch (kind) {
     case "assistant":
       return "green";

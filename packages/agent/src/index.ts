@@ -1,7 +1,14 @@
 import { createEvent } from "@nexus/events";
 import { type ModelObservation } from "@nexus/model-router";
 import { type TurnRunner, type TurnRunnerInput, type TurnResult } from "@nexus/runtime";
-import { NexusError, type SubagentId, type ToolCallId, createId, redactString, safeJsonStringify } from "@nexus/shared";
+import {
+  NexusError,
+  type SubagentId,
+  type ToolCallId,
+  createId,
+  redactString,
+  safeJsonStringify
+} from "@nexus/shared";
 import { createToolRequest } from "@nexus/tool-bus";
 
 export class MinimalAgentOrchestrator implements TurnRunner {
@@ -141,7 +148,15 @@ export class MinimalAgentOrchestrator implements TurnRunner {
   }
 }
 
-export type SubagentRole = "explorer" | "architect" | "coder" | "tester" | "reviewer" | "security" | "docs" | "release";
+export type SubagentRole =
+  | "explorer"
+  | "architect"
+  | "coder"
+  | "tester"
+  | "reviewer"
+  | "security"
+  | "docs"
+  | "release";
 
 export interface SubagentTask {
   name: string;
@@ -182,7 +197,9 @@ async function ensurePlanBeforeMutation(input: {
   if (input.alreadyApproved) {
     return true;
   }
-  if (!input.toolNames.some((toolName) => toolName === "file.write" || toolName === "patch.apply")) {
+  if (
+    !input.toolNames.some((toolName) => toolName === "file.write" || toolName === "patch.apply")
+  ) {
     return input.alreadyApproved;
   }
   const plan = {
@@ -275,7 +292,10 @@ async function ensurePlanBeforeMutation(input: {
     return true;
   }
 
-  if (input.runtimeContext.nonInteractive && input.runtimeContext.config.approvalPolicy !== "always") {
+  if (
+    input.runtimeContext.nonInteractive &&
+    input.runtimeContext.config.approvalPolicy !== "always"
+  ) {
     await input.runtimeContext.eventBus.publish(
       createEvent({
         sessionId: input.sessionId,
@@ -402,7 +422,9 @@ async function ensurePlanBeforeMutation(input: {
   return true;
 }
 
-function buildContextSystemMessage(context: Awaited<ReturnType<TurnRunnerInput["runtimeContext"]["services"]["context"]["compile"]>>): string {
+function buildContextSystemMessage(
+  context: Awaited<ReturnType<TurnRunnerInput["runtimeContext"]["services"]["context"]["compile"]>>
+): string {
   const agentsMd = context.repository.agentsMd?.trim();
   const memoryProject = truncateForPrompt(context.memories.project.trim(), 3000);
   const memoryUser = truncateForPrompt(context.memories.user.trim(), 2000);
@@ -437,11 +459,17 @@ function buildContextSystemMessage(context: Awaited<ReturnType<TurnRunnerInput["
       compactSummary: context.compactSummary,
       promptInjectionFindings
     }),
-    agentsMd ? `\nAGENTS.md:\n${truncateForPrompt(redactString(agentsMd), 6000)}` : "\nAGENTS.md: not found.",
-    memoryProject ? `\nProject memory:\n${redactString(memoryProject)}` : "\nProject memory: empty.",
+    agentsMd
+      ? `\nAGENTS.md:\n${truncateForPrompt(redactString(agentsMd), 6000)}`
+      : "\nAGENTS.md: not found.",
+    memoryProject
+      ? `\nProject memory:\n${redactString(memoryProject)}`
+      : "\nProject memory: empty.",
     memoryUser ? `\nUser memory:\n${redactString(memoryUser)}` : "\nUser memory: empty.",
     gitStatus ? `\nGit status:\n${redactString(gitStatus)}` : "\nGit status: unavailable or clean.",
-    gitDiff ? `\nCurrent git diff excerpt:\n${redactString(gitDiff)}` : "\nCurrent git diff excerpt: empty."
+    gitDiff
+      ? `\nCurrent git diff excerpt:\n${redactString(gitDiff)}`
+      : "\nCurrent git diff excerpt: empty."
   ].join("\n");
 }
 

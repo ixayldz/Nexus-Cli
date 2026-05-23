@@ -14,4 +14,3 @@ Interactive sessions can use:
 ```
 
 Rollback refuses protected or workspace-escaping targets.
-

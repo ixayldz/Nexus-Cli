@@ -26,7 +26,9 @@ describe("OpenAiResponsesProvider", () => {
     try {
       await writeFile(
         join(cwd, "auth.json"),
-        JSON.stringify({ providers: { openai: { apiKey: "sk-filekey123456", project: "proj_123" } } }),
+        JSON.stringify({
+          providers: { openai: { apiKey: "sk-filekey123456", project: "proj_123" } }
+        }),
         "utf8"
       );
 
@@ -36,7 +38,11 @@ describe("OpenAiResponsesProvider", () => {
         env: {}
       });
 
-      expect(auth).toMatchObject({ apiKey: "sk-filekey123456", project: "proj_123", source: "auth_file" });
+      expect(auth).toMatchObject({
+        apiKey: "sk-filekey123456",
+        project: "proj_123",
+        source: "auth_file"
+      });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -50,7 +56,7 @@ describe("OpenAiResponsesProvider", () => {
           type: "function_call",
           call_id: "call_read",
           name: "file__read",
-          arguments: "{\"path\":\"package.json\"}"
+          arguments: '{"path":"package.json"}'
         }
       ],
       usage: { input_tokens: 12, output_tokens: 7 }
@@ -58,7 +64,9 @@ describe("OpenAiResponsesProvider", () => {
 
     expect(result.message).toBe("Need to read a file.");
     expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 7 });
-    expect(result.toolCalls).toMatchObject([{ id: "call_read", name: "file.read", input: { path: "package.json" } }]);
+    expect(result.toolCalls).toMatchObject([
+      { id: "call_read", name: "file.read", input: { path: "package.json" } }
+    ]);
   });
 
   it("normalizes malformed tool arguments safely", () => {
@@ -84,7 +92,9 @@ describe("OpenAiResponsesProvider", () => {
         expect(headers.authorization).toBe("Bearer sk-secret123456");
         expect(JSON.stringify(body.tools)).toContain("test__run");
         return new Response(
-          JSON.stringify({ error: { message: "bad key sk-secret123456", code: "invalid_api_key" } }),
+          JSON.stringify({
+            error: { message: "bad key sk-secret123456", code: "invalid_api_key" }
+          }),
           { status: 401, headers: { "x-request-id": "req_123" } }
         );
       }

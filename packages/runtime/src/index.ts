@@ -113,11 +113,11 @@ export class NexusRuntime {
   public readonly eventBus: EventBus;
 
   public constructor(input: {
-      config: ResolvedConfig;
-      services: RuntimeServices;
-      turnRunner: TurnRunner;
-      eventBus?: EventBus;
-    }) {
+    config: ResolvedConfig;
+    services: RuntimeServices;
+    turnRunner: TurnRunner;
+    eventBus?: EventBus;
+  }) {
     this.config = input.config;
     this.services = input.services;
     this.turnRunner = input.turnRunner;
@@ -168,7 +168,11 @@ export class NexusRuntime {
       ? manifests.find((candidate) => candidate.sessionId === input.sessionId)
       : manifests[0];
     if (!manifest) {
-      throw new Error(input.sessionId ? `Session '${input.sessionId}' was not found.` : "No previous session was found.");
+      throw new Error(
+        input.sessionId
+          ? `Session '${input.sessionId}' was not found.`
+          : "No previous session was found."
+      );
     }
 
     const threadId = createId("thread") as unknown as ThreadId;
@@ -187,7 +191,9 @@ export class NexusRuntime {
 
     this.session = session;
     this.storage = storage;
-    await storage.writeManifest(createManifest(session, storage, undefined, manifest.parentSessionId, "running"));
+    await storage.writeManifest(
+      createManifest(session, storage, undefined, manifest.parentSessionId, "running")
+    );
     await this.eventBus.publish(
       createEvent({
         sessionId: session.id,
@@ -208,8 +214,14 @@ export class NexusRuntime {
     return this.startSession({ cwd: input.cwd, mode: input.mode, parentSessionId: sessionId });
   }
 
-  public async approve(requestId: ApprovalRequestId, scope: "once" | "session" = "once"): Promise<void> {
-    this.services.approvals.decide(requestId, scope === "session" ? "approved_for_session" : "approved");
+  public async approve(
+    requestId: ApprovalRequestId,
+    scope: "once" | "session" = "once"
+  ): Promise<void> {
+    this.services.approvals.decide(
+      requestId,
+      scope === "session" ? "approved_for_session" : "approved"
+    );
   }
 
   public async deny(requestId: ApprovalRequestId): Promise<void> {
@@ -225,7 +237,9 @@ export class NexusRuntime {
         this.services.approvals.decide(approval.id, "denied");
       }
     }
-    await this.storage.writeManifest(createManifest(this.session, this.storage, undefined, this.session.parentSessionId, "stopped"));
+    await this.storage.writeManifest(
+      createManifest(this.session, this.storage, undefined, this.session.parentSessionId, "stopped")
+    );
   }
 
   public async runTurn(input: UserTurnInput): Promise<TurnResult> {
@@ -332,7 +346,10 @@ function createManifest(
   };
 }
 
-function mergeManifest(previous: SessionManifest | undefined, next: SessionManifest): SessionManifest {
+function mergeManifest(
+  previous: SessionManifest | undefined,
+  next: SessionManifest
+): SessionManifest {
   if (!previous) {
     return next;
   }

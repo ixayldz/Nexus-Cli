@@ -60,7 +60,10 @@ describe("MinimalAgentOrchestrator", () => {
       });
 
       await runtime.startSession({ cwd, mode: "non-interactive" });
-      await runtime.runTurn({ text: "summarize src/index.ts", createdAt: "2026-05-21T00:00:00.000Z" });
+      await runtime.runTurn({
+        text: "summarize src/index.ts",
+        createdAt: "2026-05-21T00:00:00.000Z"
+      });
 
       const call = provider.calls[0];
       expect(call?.context).toMatchObject({

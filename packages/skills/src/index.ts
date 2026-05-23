@@ -132,8 +132,20 @@ async function readSkillManifest(path: string): Promise<SkillManifest | undefine
       version: parsed.version,
       triggers: parsed.triggers.filter((item): item is string => typeof item === "string"),
       files: parsed.files.filter((item): item is string => typeof item === "string"),
-      ...(Array.isArray(parsed.requiredTools) ? { requiredTools: parsed.requiredTools.filter((item): item is string => typeof item === "string") } : {}),
-      ...(Array.isArray(parsed.permissions) ? { permissions: parsed.permissions.filter((item): item is string => typeof item === "string") } : {})
+      ...(Array.isArray(parsed.requiredTools)
+        ? {
+            requiredTools: parsed.requiredTools.filter(
+              (item): item is string => typeof item === "string"
+            )
+          }
+        : {}),
+      ...(Array.isArray(parsed.permissions)
+        ? {
+            permissions: parsed.permissions.filter(
+              (item): item is string => typeof item === "string"
+            )
+          }
+        : {})
     };
   }
   return undefined;

@@ -134,6 +134,10 @@ const learningModeSchema = z.enum(["off", "observe", "suggest", "active"]);
 
 const rawConfigSchema = z.object({}).passthrough();
 const builtInProfiles: Record<string, PartialConfig> = {
+  fake: {
+    model: "fake-default",
+    model_provider: "fake"
+  },
   deepseek: {
     model: "deepseek-v4-flash",
     model_provider: "deepseek"
@@ -141,8 +145,8 @@ const builtInProfiles: Record<string, PartialConfig> = {
 };
 
 export const defaultConfig: Omit<ResolvedConfig, "sources" | "selectedProfile"> = {
-  model: "fake-default",
-  modelProvider: "fake",
+  model: "deepseek-v4-flash",
+  modelProvider: "deepseek",
   approvalPolicy: "on-request",
   sandboxMode: "workspace-write",
   features: {
@@ -166,7 +170,18 @@ export const defaultConfig: Omit<ResolvedConfig, "sources" | "selectedProfile"> 
   },
   security: {
     networkDefault: "off",
-    protectedPaths: [".env", ".env.*", ".ssh", ".aws", ".gcp", ".azure", ".git", "node_modules", "dist", "build"],
+    protectedPaths: [
+      ".env",
+      ".env.*",
+      ".ssh",
+      ".aws",
+      ".gcp",
+      ".azure",
+      ".git",
+      "node_modules",
+      "dist",
+      "build"
+    ],
     secretsScanning: true,
     promptInjectionDetection: true,
     requireHardSandbox: false
@@ -198,7 +213,15 @@ export const defaultConfig: Omit<ResolvedConfig, "sources" | "selectedProfile"> 
     enterpriseAudit: true
   },
   tui: {
-    statusLineItems: ["model", "sandbox", "approval", "git_branch", "tokens", "sdlc_stage", "learning_mode"]
+    statusLineItems: [
+      "model",
+      "sandbox",
+      "approval",
+      "git_branch",
+      "tokens",
+      "sdlc_stage",
+      "learning_mode"
+    ]
   },
   providers: {
     fake: {},
@@ -299,7 +322,10 @@ async function loadConfigFile(filePath: string, sources: ConfigSource[]): Promis
   }
 }
 
-function applyOverrides(config: PartialConfig, overrides: ConfigOverrides | undefined): PartialConfig {
+function applyOverrides(
+  config: PartialConfig,
+  overrides: ConfigOverrides | undefined
+): PartialConfig {
   if (!overrides) {
     return config;
   }
@@ -317,8 +343,12 @@ function normalizeAndValidate(
   sources: ConfigSource[],
   selectedProfile: string | undefined
 ): ResolvedConfig {
-  const approvalPolicy = approvalPolicySchema.parse(readString(config, "approval_policy") ?? "on-request");
-  const sandboxMode = sandboxModeSchema.parse(readString(config, "sandbox_mode") ?? "workspace-write");
+  const approvalPolicy = approvalPolicySchema.parse(
+    readString(config, "approval_policy") ?? "on-request"
+  );
+  const sandboxMode = sandboxModeSchema.parse(
+    readString(config, "sandbox_mode") ?? "workspace-write"
+  );
   const learning = readRecord(config, "learning") ?? {};
   const features = readRecord(config, "features") ?? {};
   const sdlc = readRecord(config, "sdlc") ?? {};
@@ -341,7 +371,8 @@ function normalizeAndValidate(
     ...(selectedProfile ? { selectedProfile } : {}),
     features: {
       agenticSdlc: readBoolean(features, "agentic_sdlc") ?? defaultConfig.features.agenticSdlc,
-      learningPlane: readBoolean(features, "learning_plane") ?? defaultConfig.features.learningPlane,
+      learningPlane:
+        readBoolean(features, "learning_plane") ?? defaultConfig.features.learningPlane,
       subagents: readBoolean(features, "subagents") ?? defaultConfig.features.subagents,
       mcp: readBoolean(features, "mcp") ?? defaultConfig.features.mcp,
       skills: readBoolean(features, "skills") ?? defaultConfig.features.skills,
@@ -350,57 +381,79 @@ function normalizeAndValidate(
     },
     learning: {
       mode: learningModeSchema.parse(readString(learning, "mode") ?? defaultConfig.learning.mode),
-      redactSecrets: readBoolean(learning, "redact_secrets") ?? defaultConfig.learning.redactSecrets,
+      redactSecrets:
+        readBoolean(learning, "redact_secrets") ?? defaultConfig.learning.redactSecrets,
       requireUserConfirmation:
-        readBoolean(learning, "require_user_confirmation") ?? defaultConfig.learning.requireUserConfirmation
+        readBoolean(learning, "require_user_confirmation") ??
+        defaultConfig.learning.requireUserConfirmation
     },
     sdlc: {
       requirePlanForLargeChanges:
-        readBoolean(sdlc, "require_plan_for_large_changes") ?? defaultConfig.sdlc.requirePlanForLargeChanges,
-      requireVerification: readBoolean(sdlc, "require_verification") ?? defaultConfig.sdlc.requireVerification,
+        readBoolean(sdlc, "require_plan_for_large_changes") ??
+        defaultConfig.sdlc.requirePlanForLargeChanges,
+      requireVerification:
+        readBoolean(sdlc, "require_verification") ?? defaultConfig.sdlc.requireVerification,
       requireReviewForSecuritySensitiveChanges:
         readBoolean(sdlc, "require_review_for_security_sensitive_changes") ??
         defaultConfig.sdlc.requireReviewForSecuritySensitiveChanges
     },
     security: {
       networkDefault:
-        parseNetworkDefault(readString(security, "network_default")) ?? defaultConfig.security.networkDefault,
-      protectedPaths: readStringArray(security, "protected_paths") ?? defaultConfig.security.protectedPaths,
-      secretsScanning: readBoolean(security, "secrets_scanning") ?? defaultConfig.security.secretsScanning,
+        parseNetworkDefault(readString(security, "network_default")) ??
+        defaultConfig.security.networkDefault,
+      protectedPaths:
+        readStringArray(security, "protected_paths") ?? defaultConfig.security.protectedPaths,
+      secretsScanning:
+        readBoolean(security, "secrets_scanning") ?? defaultConfig.security.secretsScanning,
       promptInjectionDetection:
-        readBoolean(security, "prompt_injection_detection") ?? defaultConfig.security.promptInjectionDetection,
-      requireHardSandbox: readBoolean(security, "require_hard_sandbox") ?? defaultConfig.security.requireHardSandbox
+        readBoolean(security, "prompt_injection_detection") ??
+        defaultConfig.security.promptInjectionDetection,
+      requireHardSandbox:
+        readBoolean(security, "require_hard_sandbox") ?? defaultConfig.security.requireHardSandbox
     },
     sandbox: {
       preferredAdapter:
-        parseSandboxPreferredAdapter(readString(sandbox, "preferred_adapter")) ?? defaultConfig.sandbox.preferredAdapter,
+        parseSandboxPreferredAdapter(readString(sandbox, "preferred_adapter")) ??
+        defaultConfig.sandbox.preferredAdapter,
       containerRuntime:
-        parseContainerRuntime(readString(sandbox, "container_runtime")) ?? defaultConfig.sandbox.containerRuntime,
-      containerImage: readString(sandbox, "container_image") ?? defaultConfig.sandbox.containerImage,
+        parseContainerRuntime(readString(sandbox, "container_runtime")) ??
+        defaultConfig.sandbox.containerRuntime,
+      containerImage:
+        readString(sandbox, "container_image") ?? defaultConfig.sandbox.containerImage,
       containerNetwork:
-        parseContainerNetwork(readString(sandbox, "container_network")) ?? defaultConfig.sandbox.containerNetwork,
+        parseContainerNetwork(readString(sandbox, "container_network")) ??
+        defaultConfig.sandbox.containerNetwork,
       envAllowlist: readStringArray(sandbox, "env_allowlist") ?? defaultConfig.sandbox.envAllowlist,
       timeoutMs: readNumber(sandbox, "timeout_ms") ?? defaultConfig.sandbox.timeoutMs,
       ...(sandboxMemoryLimitMb !== undefined ? { memoryLimitMb: sandboxMemoryLimitMb } : {}),
       ...(sandboxCpuLimit !== undefined ? { cpuLimit: sandboxCpuLimit } : {})
     },
     policy: {
-      allowedProviders: readStringArray(policy, "allowed_providers") ?? defaultConfig.policy.allowedProviders,
-      allowedModels: readStringArray(policy, "allowed_models") ?? defaultConfig.policy.allowedModels,
-      allowedMcpServers: readStringArray(policy, "allowed_mcp_servers") ?? defaultConfig.policy.allowedMcpServers
+      allowedProviders:
+        readStringArray(policy, "allowed_providers") ?? defaultConfig.policy.allowedProviders,
+      allowedModels:
+        readStringArray(policy, "allowed_models") ?? defaultConfig.policy.allowedModels,
+      allowedMcpServers:
+        readStringArray(policy, "allowed_mcp_servers") ?? defaultConfig.policy.allowedMcpServers
     },
     retention: {
-      localLogsDays: readNumber(retention, "local_logs_days") ?? defaultConfig.retention.localLogsDays,
-      eventLogsDays: readNumber(retention, "event_logs_days") ?? defaultConfig.retention.eventLogsDays,
+      localLogsDays:
+        readNumber(retention, "local_logs_days") ?? defaultConfig.retention.localLogsDays,
+      eventLogsDays:
+        readNumber(retention, "event_logs_days") ?? defaultConfig.retention.eventLogsDays,
       memoryRetention: "until_deleted",
       cloudSync: readBoolean(retention, "cloud_sync") ?? defaultConfig.retention.cloudSync
     },
     telemetry: {
-      operationalMetrics: readBoolean(telemetry, "operational_metrics") ?? defaultConfig.telemetry.operationalMetrics,
-      productAnalytics: readBoolean(telemetry, "product_analytics") ?? defaultConfig.telemetry.productAnalytics,
-      contentTelemetry: readBoolean(telemetry, "content_telemetry") ?? defaultConfig.telemetry.contentTelemetry,
+      operationalMetrics:
+        readBoolean(telemetry, "operational_metrics") ?? defaultConfig.telemetry.operationalMetrics,
+      productAnalytics:
+        readBoolean(telemetry, "product_analytics") ?? defaultConfig.telemetry.productAnalytics,
+      contentTelemetry:
+        readBoolean(telemetry, "content_telemetry") ?? defaultConfig.telemetry.contentTelemetry,
       crashReports: readBoolean(telemetry, "crash_reports") ?? defaultConfig.telemetry.crashReports,
-      enterpriseAudit: readBoolean(telemetry, "enterprise_audit") ?? defaultConfig.telemetry.enterpriseAudit
+      enterpriseAudit:
+        readBoolean(telemetry, "enterprise_audit") ?? defaultConfig.telemetry.enterpriseAudit
     },
     tui: {
       statusLineItems: readStringArray(tuiStatusLine, "items") ?? defaultConfig.tui.statusLineItems
@@ -410,7 +463,9 @@ function normalizeAndValidate(
   };
 }
 
-function normalizeResolved(config: Omit<ResolvedConfig, "sources" | "selectedProfile">): PartialConfig {
+function normalizeResolved(
+  config: Omit<ResolvedConfig, "sources" | "selectedProfile">
+): PartialConfig {
   return {
     model: config.model,
     model_provider: config.modelProvider,
@@ -433,7 +488,8 @@ function normalizeResolved(config: Omit<ResolvedConfig, "sources" | "selectedPro
     sdlc: {
       require_plan_for_large_changes: config.sdlc.requirePlanForLargeChanges,
       require_verification: config.sdlc.requireVerification,
-      require_review_for_security_sensitive_changes: config.sdlc.requireReviewForSecuritySensitiveChanges
+      require_review_for_security_sensitive_changes:
+        config.sdlc.requireReviewForSecuritySensitiveChanges
     },
     security: {
       network_default: config.security.networkDefault,
@@ -449,7 +505,9 @@ function normalizeResolved(config: Omit<ResolvedConfig, "sources" | "selectedPro
       container_network: config.sandbox.containerNetwork,
       env_allowlist: config.sandbox.envAllowlist,
       timeout_ms: config.sandbox.timeoutMs,
-      ...(config.sandbox.memoryLimitMb !== undefined ? { memory_limit_mb: config.sandbox.memoryLimitMb } : {}),
+      ...(config.sandbox.memoryLimitMb !== undefined
+        ? { memory_limit_mb: config.sandbox.memoryLimitMb }
+        : {}),
       ...(config.sandbox.cpuLimit !== undefined ? { cpu_limit: config.sandbox.cpuLimit } : {})
     },
     policy: {
@@ -513,7 +571,9 @@ function readBoolean(source: PartialConfig, key: string): boolean | undefined {
 
 function readStringArray(source: PartialConfig, key: string): string[] | undefined {
   const value = source[key];
-  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : undefined;
 }
 
 function readNumber(source: PartialConfig, key: string): number | undefined {
@@ -521,28 +581,37 @@ function readNumber(source: PartialConfig, key: string): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
-function parseSandboxPreferredAdapter(value: string | undefined): SandboxConfig["preferredAdapter"] | undefined {
+function parseSandboxPreferredAdapter(
+  value: string | undefined
+): SandboxConfig["preferredAdapter"] | undefined {
   if (value === "auto" || value === "typescript" || value === "docker" || value === "podman") {
     return value;
   }
   return undefined;
 }
 
-function parseContainerRuntime(value: string | undefined): SandboxConfig["containerRuntime"] | undefined {
+function parseContainerRuntime(
+  value: string | undefined
+): SandboxConfig["containerRuntime"] | undefined {
   if (value === "auto" || value === "docker" || value === "podman") {
     return value;
   }
   return undefined;
 }
 
-function parseContainerNetwork(value: string | undefined): SandboxConfig["containerNetwork"] | undefined {
+function parseContainerNetwork(
+  value: string | undefined
+): SandboxConfig["containerNetwork"] | undefined {
   if (value === "none" || value === "host") {
     return value;
   }
   return undefined;
 }
 
-function mergeProviderConfigs(defaults: ProviderConfigMap, source: PartialConfig): ProviderConfigMap {
+function mergeProviderConfigs(
+  defaults: ProviderConfigMap,
+  source: PartialConfig
+): ProviderConfigMap {
   const providers: ProviderConfigMap = { ...defaults };
   for (const [providerId, rawValue] of Object.entries(source)) {
     if (!isRecord(rawValue)) {

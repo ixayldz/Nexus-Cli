@@ -79,7 +79,9 @@ export async function listSessionManifests(input: { cwd: string }): Promise<Sess
     if (!entry.isDirectory()) {
       continue;
     }
-    const content = await readFile(join(runsRoot, entry.name, "manifest.json"), "utf8").catch(() => undefined);
+    const content = await readFile(join(runsRoot, entry.name, "manifest.json"), "utf8").catch(
+      () => undefined
+    );
     if (!content) {
       continue;
     }
@@ -138,13 +140,20 @@ export async function createSessionStorage(input: {
   };
 }
 
-async function safeWriteFile(filePath: string, content: string, allowedRoot: string): Promise<void> {
+async function safeWriteFile(
+  filePath: string,
+  content: string,
+  allowedRoot: string
+): Promise<void> {
   await assertSafeWriteTarget(filePath, allowedRoot);
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
 }
 
-async function assertSafeProjectStorageRoot(cwd: string, projectStorageRoot: string): Promise<void> {
+async function assertSafeProjectStorageRoot(
+  cwd: string,
+  projectStorageRoot: string
+): Promise<void> {
   const root = resolve(cwd);
   const realRoot = await realpath(root).catch(() => root);
   const metadata = await lstat(projectStorageRoot).catch(() => undefined);

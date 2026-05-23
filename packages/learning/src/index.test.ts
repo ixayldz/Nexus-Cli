@@ -18,7 +18,10 @@ describe("LearningPlane", () => {
         "utf8"
       );
       await writeFile(join(cwd, "pnpm-lock.yaml"), "", "utf8");
-      const context = await new ContextCompiler().compile({ cwd, config: { ...defaultConfig, sources: [] } });
+      const context = await new ContextCompiler().compile({
+        cwd,
+        config: { ...defaultConfig, sources: [] }
+      });
       const events: string[] = [];
       const eventBus = new InMemoryEventBus();
       eventBus.subscribe((event) => {
@@ -54,7 +57,10 @@ describe("LearningPlane", () => {
   it("does not generate candidates when learning is off", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nexus-learning-"));
     try {
-      const context = await new ContextCompiler().compile({ cwd, config: { ...defaultConfig, sources: [] } });
+      const context = await new ContextCompiler().compile({
+        cwd,
+        config: { ...defaultConfig, sources: [] }
+      });
       const candidates = await new LearningPlane({ mode: "off" }).generateCandidates({
         sessionId: "nx_test" as SessionId,
         eventBus: new InMemoryEventBus(),
@@ -73,7 +79,11 @@ describe("LearningPlane", () => {
     const cwd = await mkdtemp(join(tmpdir(), "nexus-learning-"));
     const userMemoryRoot = await mkdtemp(join(tmpdir(), "nexus-user-memory-"));
     try {
-      await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest run" } }), "utf8");
+      await writeFile(
+        join(cwd, "package.json"),
+        JSON.stringify({ scripts: { test: "vitest run" } }),
+        "utf8"
+      );
       await writeFile(join(cwd, "pnpm-lock.yaml"), "", "utf8");
       const context = await new ContextCompiler({ userMemoryRoot }).compile({
         cwd,
@@ -114,7 +124,11 @@ describe("LearningPlane", () => {
     const cwd = await mkdtemp(join(tmpdir(), "nexus-learning-"));
     const userMemoryRoot = await mkdtemp(join(tmpdir(), "nexus-user-memory-"));
     try {
-      await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest run" } }), "utf8");
+      await writeFile(
+        join(cwd, "package.json"),
+        JSON.stringify({ scripts: { test: "vitest run" } }),
+        "utf8"
+      );
       await writeFile(join(cwd, "pnpm-lock.yaml"), "", "utf8");
       const context = await new ContextCompiler({ userMemoryRoot }).compile({
         cwd,
@@ -148,7 +162,9 @@ describe("LearningPlane", () => {
         text: "Use pnpm verify for release checks."
       });
       expect(edited?.text).toContain("pnpm verify");
-      await expect(readFile(join(cwd, ".nexus", "learning", "project-memory.md"), "utf8")).resolves.toContain("pnpm verify");
+      await expect(
+        readFile(join(cwd, ".nexus", "learning", "project-memory.md"), "utf8")
+      ).resolves.toContain("pnpm verify");
 
       const deleted = await secondPlane.deleteMemory({
         sessionId: "nx_test" as SessionId,
@@ -157,9 +173,9 @@ describe("LearningPlane", () => {
         memoryId: entry.id
       });
       expect(deleted?.id).toBe(entry.id);
-      await expect(readFile(join(cwd, ".nexus", "learning", "project-memory.md"), "utf8")).resolves.not.toContain(
-        "pnpm verify"
-      );
+      await expect(
+        readFile(join(cwd, ".nexus", "learning", "project-memory.md"), "utf8")
+      ).resolves.not.toContain("pnpm verify");
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(userMemoryRoot, { recursive: true, force: true });
@@ -171,7 +187,11 @@ describe("LearningPlane", () => {
     const external = await mkdtemp(join(tmpdir(), "nexus-learning-external-"));
     try {
       try {
-        await symlink(external, join(cwd, ".nexus"), process.platform === "win32" ? "junction" : "dir");
+        await symlink(
+          external,
+          join(cwd, ".nexus"),
+          process.platform === "win32" ? "junction" : "dir"
+        );
       } catch {
         return;
       }

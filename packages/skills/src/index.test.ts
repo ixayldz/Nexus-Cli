@@ -9,7 +9,10 @@ describe("skill registry", () => {
       expect.arrayContaining([expect.objectContaining({ id: "code-review" })])
     );
     await expect(registry.match(process.cwd(), "run a security review")).resolves.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "code-review" }), expect.objectContaining({ id: "security-audit" })])
+      expect.arrayContaining([
+        expect.objectContaining({ id: "code-review" }),
+        expect.objectContaining({ id: "security-audit" })
+      ])
     );
   });
 });

@@ -84,11 +84,14 @@ export class ContainerSandboxAdapter implements SandboxAdapter {
   public async prepare(input: SandboxPrepareInput): Promise<SandboxContext> {
     const runtime = await resolveContainerRuntime(input.config);
     if (!runtime) {
-      throw new Error("Docker or Podman is required for hard sandbox enforcement but was not available.");
+      throw new Error(
+        "Docker or Podman is required for hard sandbox enforcement but was not available."
+      );
     }
 
     const container = input.config?.container ?? {};
-    const mountMode: SandboxMountMode = input.mode === "read-only" ? "read-only" : "workspace-write";
+    const mountMode: SandboxMountMode =
+      input.mode === "read-only" ? "read-only" : "workspace-write";
     const image = container.image ?? "node:22-bookworm-slim";
     const network = container.network ?? "none";
     return {
@@ -116,16 +119,23 @@ export interface SandboxResolution {
 
 export class SandboxManager {
   public constructor(
-    private readonly adapters: SandboxAdapter[] = [new ContainerSandboxAdapter(), new TypescriptSandboxAdapter()]
+    private readonly adapters: SandboxAdapter[] = [
+      new ContainerSandboxAdapter(),
+      new TypescriptSandboxAdapter()
+    ]
   ) {}
 
   public async prepare(input: SandboxPrepareInput): Promise<SandboxResolution> {
     if (input.requiresHardSandbox) {
-      const adapter = this.adapters.find((candidate) => candidate.id === "container" && candidate.supports(input.mode, input.platform));
+      const adapter = this.adapters.find(
+        (candidate) =>
+          candidate.id === "container" && candidate.supports(input.mode, input.platform)
+      );
       if (!adapter) {
         return {
           ok: false,
-          reason: "Hard sandbox enforcement was required, but no hard sandbox adapter is configured."
+          reason:
+            "Hard sandbox enforcement was required, but no hard sandbox adapter is configured."
         };
       }
       try {
@@ -144,9 +154,15 @@ export class SandboxManager {
     const preferred = input.config?.preferredAdapter;
     const adapter =
       preferred && preferred !== "auto"
-        ? this.adapters.find((candidate) => adapterMatchesPreferred(candidate, preferred) && candidate.supports(input.mode, input.platform))
-        : this.adapters.find((candidate) => candidate.id === "typescript-guard" && candidate.supports(input.mode, input.platform)) ??
-          this.adapters.find((candidate) => candidate.supports(input.mode, input.platform));
+        ? this.adapters.find(
+            (candidate) =>
+              adapterMatchesPreferred(candidate, preferred) &&
+              candidate.supports(input.mode, input.platform)
+          )
+        : (this.adapters.find(
+            (candidate) =>
+              candidate.id === "typescript-guard" && candidate.supports(input.mode, input.platform)
+          ) ?? this.adapters.find((candidate) => candidate.supports(input.mode, input.platform)));
     if (!adapter) {
       return {
         ok: false,
@@ -164,7 +180,12 @@ export class SandboxManager {
     const docker = await commandAvailable("docker");
     const podman = await commandAvailable("podman");
     return [
-      { id: "typescript", available: true, hardEnforced: false, reason: "Policy guard only; no kernel/container isolation." },
+      {
+        id: "typescript",
+        available: true,
+        hardEnforced: false,
+        reason: "Policy guard only; no kernel/container isolation."
+      },
       {
         id: "docker",
         available: docker,
@@ -204,8 +225,14 @@ function adapterMatchesPreferred(adapter: SandboxAdapter, preferred: SandboxRunt
   return adapter.id === "container";
 }
 
-async function resolveContainerRuntime(config: SandboxRuntimeConfig | undefined): Promise<"docker" | "podman" | undefined> {
-  const preferred = config?.container?.runtime ?? (config?.preferredAdapter === "docker" || config?.preferredAdapter === "podman" ? config.preferredAdapter : "auto");
+async function resolveContainerRuntime(
+  config: SandboxRuntimeConfig | undefined
+): Promise<"docker" | "podman" | undefined> {
+  const preferred =
+    config?.container?.runtime ??
+    (config?.preferredAdapter === "docker" || config?.preferredAdapter === "podman"
+      ? config.preferredAdapter
+      : "auto");
   if (preferred === "docker" || preferred === "podman") {
     return (await commandAvailable(preferred)) ? preferred : undefined;
   }
@@ -220,9 +247,14 @@ async function resolveContainerRuntime(config: SandboxRuntimeConfig | undefined)
 
 async function commandAvailable(command: "docker" | "podman"): Promise<boolean> {
   return new Promise((resolvePromise) => {
-    const child = execFile(command, ["--version"], { timeout: 2000, windowsHide: true }, (error) => {
-      resolvePromise(!error);
-    });
+    const child = execFile(
+      command,
+      ["--version"],
+      { timeout: 2000, windowsHide: true },
+      (error) => {
+        resolvePromise(!error);
+      }
+    );
     child.on("error", () => {
       resolvePromise(false);
     });

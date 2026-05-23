@@ -20,9 +20,11 @@ Recommended release checks:
 ```bash
 pnpm lint
 pnpm typecheck
-pnpm test
+pnpm test:coverage
 pnpm eval:baseline
 pnpm eval:security
-pnpm provider:smoke
 pnpm verify:package
+pnpm verify:release
 ```
+
+Run `pnpm verify:external` separately when `DEEPSEEK_API_KEY` is available.

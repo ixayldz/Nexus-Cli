@@ -30,13 +30,28 @@ if (result.status === "failed") {
   process.stdout.write(`${result.status}: ${result.summary}\n`);
 }
 
-async function runProviderSmoke(providerId: ProviderId, model: string): Promise<ProviderSmokeResult> {
+async function runProviderSmoke(
+  providerId: ProviderId,
+  model: string
+): Promise<ProviderSmokeResult> {
   const createdAt = nowIso();
   if (providerId === "deepseek" && !process.env.DEEPSEEK_API_KEY) {
-    return { provider: providerId, model, status: "skipped", summary: "DEEPSEEK_API_KEY is not set.", createdAt };
+    return {
+      provider: providerId,
+      model,
+      status: "skipped",
+      summary: "DEEPSEEK_API_KEY is not set.",
+      createdAt
+    };
   }
   if (providerId === "openai" && !process.env.OPENAI_API_KEY) {
-    return { provider: providerId, model, status: "skipped", summary: "OPENAI_API_KEY is not set.", createdAt };
+    return {
+      provider: providerId,
+      model,
+      status: "skipped",
+      summary: "OPENAI_API_KEY is not set.",
+      createdAt
+    };
   }
 
   const providerInstance =

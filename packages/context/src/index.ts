@@ -99,7 +99,9 @@ export class ContextCompiler {
     const mentions = await resolveMentions(repoRoot, input.prompt ?? "");
     const toolOutputs = input.toolOutputs ?? [];
     const promptInjectionFindings =
-      input.config.security.promptInjectionDetection && agentsMd ? new PromptInjectionDetector().detect(agentsMd) : [];
+      input.config.security.promptInjectionDetection && agentsMd
+        ? new PromptInjectionDetector().detect(agentsMd)
+        : [];
     const compactSummary = buildCompactSummary({
       cwd,
       repoRoot,
@@ -259,7 +261,11 @@ async function readPackageJson(cwd: string): Promise<{ scripts: Record<string, s
   }
   try {
     const parsed = JSON.parse(content) as { scripts?: unknown };
-    if (typeof parsed.scripts === "object" && parsed.scripts !== null && !Array.isArray(parsed.scripts)) {
+    if (
+      typeof parsed.scripts === "object" &&
+      parsed.scripts !== null &&
+      !Array.isArray(parsed.scripts)
+    ) {
       const scripts: Record<string, string> = {};
       for (const [name, value] of Object.entries(parsed.scripts)) {
         if (typeof value === "string") {
@@ -274,7 +280,10 @@ async function readPackageJson(cwd: string): Promise<{ scripts: Record<string, s
   return { scripts: {} };
 }
 
-function detectTestCommands(packageManager: "pnpm" | "npm" | "yarn" | "unknown", scripts: Record<string, string>): string[] {
+function detectTestCommands(
+  packageManager: "pnpm" | "npm" | "yarn" | "unknown",
+  scripts: Record<string, string>
+): string[] {
   return ["test", "typecheck", "lint"]
     .filter((script) => Boolean(scripts[script]))
     .map((script) => packageCommand(packageManager, script));
@@ -321,7 +330,11 @@ function parseGitBranch(stdout: string): string {
 }
 
 async function resolveMentions(repoRoot: string, prompt: string): Promise<MentionResolution[]> {
-  const matches = [...prompt.matchAll(/(?:^|\s)([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|json|md|toml|yaml|yml|css|html))/g)];
+  const matches = [
+    ...prompt.matchAll(
+      /(?:^|\s)([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|json|md|toml|yaml|yml|css|html))/g
+    )
+  ];
   const mentions: MentionResolution[] = [];
   for (const match of matches.slice(0, 20)) {
     const mention = match[1];
@@ -341,7 +354,10 @@ async function resolveMentions(repoRoot: string, prompt: string): Promise<Mentio
   return mentions;
 }
 
-async function readMemories(repoRoot: string, userMemoryRoot: string | undefined): Promise<MemoryInjection> {
+async function readMemories(
+  repoRoot: string,
+  userMemoryRoot: string | undefined
+): Promise<MemoryInjection> {
   const project = join(repoRoot, ".nexus", "learning", "project-memory.md");
   const user = join(userMemoryRoot ?? join(homedir(), ".nexus", "memories"), "user-memory.md");
   return {
@@ -368,8 +384,7 @@ function buildCompactSummary(input: {
   const scriptNames = Object.keys(input.packageScripts);
   const changed = input.git.status
     .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0 && !line.startsWith("## "))
-    .length;
+    .filter((line) => line.trim().length > 0 && !line.startsWith("## ")).length;
   return [
     `cwd=${input.cwd}`,
     `repo=${basename(input.repoRoot)}`,
@@ -403,7 +418,10 @@ function estimateTokenBudget(input: {
     input.memories.user.length +
     input.compactSummary.length +
     input.repoMap.files.reduce((sum, file) => sum + file.path.length + 12, 0) +
-    input.toolOutputs.reduce((sum, item) => sum + item.summary.length + item.tool.length + item.status.length, 0);
+    input.toolOutputs.reduce(
+      (sum, item) => sum + item.summary.length + item.tool.length + item.status.length,
+      0
+    );
   const estimatedInputTokens = Math.ceil(chars / 4);
   const maxContextTokens = 128000;
   return {

@@ -9,4 +9,3 @@ node apps/cli/dist/main.js skills
 ```
 
 Skill summaries may be injected into context; full skill content should only be loaded when needed.
-

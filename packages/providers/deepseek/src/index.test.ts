@@ -4,7 +4,9 @@ import { DeepSeekChatProvider, loadDeepSeekAuth, normalizeDeepSeekResponse } fro
 
 describe("DeepSeek provider", () => {
   it("loads API key from DEEPSEEK_API_KEY", async () => {
-    await expect(loadDeepSeekAuth({ env: { DEEPSEEK_API_KEY: "test-key" } })).resolves.toMatchObject({
+    await expect(
+      loadDeepSeekAuth({ env: { DEEPSEEK_API_KEY: "test-key" } })
+    ).resolves.toMatchObject({
       apiKey: "test-key",
       source: "environment"
     });
@@ -21,7 +23,7 @@ describe("DeepSeek provider", () => {
               {
                 id: "call_1",
                 type: "function",
-                function: { name: "file__read", arguments: "{\"path\":\"package.json\"}" }
+                function: { name: "file__read", arguments: '{"path":"package.json"}' }
               }
             ]
           }
@@ -32,7 +34,9 @@ describe("DeepSeek provider", () => {
 
     expect(result.message).toBe("I will read the file.");
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 11 });
-    expect(result.toolCalls).toEqual([{ id: "call_1", name: "file.read", input: { path: "package.json" } }]);
+    expect(result.toolCalls).toEqual([
+      { id: "call_1", name: "file.read", input: { path: "package.json" } }
+    ]);
   });
 
   it("sends OpenAI-compatible chat completion requests to DeepSeek", async () => {
@@ -106,10 +110,15 @@ describe("DeepSeek provider", () => {
     const provider = new DeepSeekChatProvider({
       env: { DEEPSEEK_API_KEY: "test-key" },
       fetch: async () =>
-        new Response(JSON.stringify({ error: { message: "rate limited sk-secret123456", code: "rate_limit" } }), {
-          status: 429,
-          headers: { "x-request-id": "req_1" }
-        })
+        new Response(
+          JSON.stringify({
+            error: { message: "rate limited sk-secret123456", code: "rate_limit" }
+          }),
+          {
+            status: 429,
+            headers: { "x-request-id": "req_1" }
+          }
+        )
     });
 
     await expect(
@@ -127,14 +136,18 @@ describe("DeepSeek provider", () => {
     });
   });
 
-  it.skipIf(!process.env.DEEPSEEK_API_KEY)("completes a live DeepSeek smoke request", async () => {
-    const provider = new DeepSeekChatProvider();
-    const result = await provider.call({
-      sessionId: "nx_live" as SessionId,
-      model: "deepseek-v4-flash",
-      messages: [{ role: "user", content: "Reply with exactly: nexus-live-ok" }]
-    });
+  it.skipIf(!process.env.DEEPSEEK_API_KEY)(
+    "completes a live DeepSeek smoke request",
+    async () => {
+      const provider = new DeepSeekChatProvider();
+      const result = await provider.call({
+        sessionId: "nx_live" as SessionId,
+        model: "deepseek-v4-flash",
+        messages: [{ role: "user", content: "Reply with exactly: nexus-live-ok" }]
+      });
 
-    expect(result.message.toLowerCase()).toContain("nexus-live-ok");
-  }, 90000);
+      expect(result.message.toLowerCase()).toContain("nexus-live-ok");
+    },
+    90000
+  );
 });

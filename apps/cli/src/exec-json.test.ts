@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
+const cliPath = resolve("apps/cli/src/main.ts");
+const tsxCliPath = resolve("node_modules/tsx/dist/cli.mjs");
 
 let tempDir: string | undefined;
 
@@ -25,9 +27,10 @@ describe("exec --json vertical slice", () => {
       JSON.stringify({ name: "fixture-app", version: "1.2.3", scripts: { test: "vitest" } })
     );
 
-    const result = await execFileAsync(process.execPath, [
-      "apps/cli/dist/main.js",
+    const result = await execCli([
       "exec",
+      "--profile",
+      "fake",
       "--json",
       "--cd",
       tempDir,
@@ -62,9 +65,10 @@ describe("exec --json vertical slice", () => {
 
   it("exits 2 when non-interactive approval is required", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-cli-"));
-    const result = await execFileWithExit(process.execPath, [
-      "apps/cli/dist/main.js",
+    const result = await execCliWithExit([
       "exec",
+      "--profile",
+      "fake",
       "--json",
       "--cd",
       tempDir,
@@ -81,14 +85,15 @@ describe("exec --json vertical slice", () => {
 
   it("exits 6 when exec verification fails", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-cli-"));
-    const result = await execFileWithExit(process.execPath, [
-      "apps/cli/dist/main.js",
+    const result = await execCliWithExit([
       "exec",
+      "--profile",
+      "fake",
       "--json",
       "--cd",
       tempDir,
       "--verify",
-      "node -e \"process.exit(1)\"",
+      'node -e "process.exit(1)"',
       "hello"
     ]);
 
@@ -108,13 +113,14 @@ describe("exec --json vertical slice", () => {
       ["[sdlc]", "require_plan_for_large_changes = false", ""].join("\n"),
       "utf8"
     );
-    const result = await execFileWithExit(process.execPath, [
-      "apps/cli/dist/main.js",
+    const result = await execCliWithExit([
       "exec",
+      "--profile",
+      "fake",
       "--cd",
       tempDir,
       "--verify",
-      "node -e \"process.exit(1)\"",
+      'node -e "process.exit(1)"',
       "--rollback-on-verify-fail",
       "write hello"
     ]);
@@ -124,9 +130,21 @@ describe("exec --json vertical slice", () => {
   });
 });
 
-async function execFileWithExit(command: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function execCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync(
+    process.execPath,
+    [tsxCliPath, "--tsconfig", "apps/cli/tsconfig.json", cliPath, ...args],
+    {
+      cwd: process.cwd()
+    }
+  );
+}
+
+async function execCliWithExit(
+  args: string[]
+): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
-    const result = await execFileAsync(command, args);
+    const result = await execCli(args);
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     const execError = error as { code?: number; stdout?: string; stderr?: string };

@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { type SessionId, setIdCounterForTests, setNowForTests } from "@nexus/shared";
-import { InMemoryEventBus, JsonlEventWriter, createEvent, readJsonlEvents, validateNexusEvent } from "./index.js";
+import {
+  InMemoryEventBus,
+  JsonlEventWriter,
+  createEvent,
+  readJsonlEvents,
+  validateNexusEvent
+} from "./index.js";
 
 let tempDir: string | undefined;
 
@@ -42,7 +48,9 @@ describe("events", () => {
     const sessionId = "nx_test" as SessionId;
 
     await writer.write(createEvent({ sessionId, type: "session.started" }));
-    await writer.write(createEvent({ sessionId, type: "assistant.message", data: { text: "done" } }));
+    await writer.write(
+      createEvent({ sessionId, type: "assistant.message", data: { text: "done" } })
+    );
 
     const events = await readJsonlEvents(eventPath);
     expect(events.map((event) => event.type)).toEqual(["session.started", "assistant.message"]);

@@ -21,12 +21,28 @@ describe("hook registry", () => {
     await mkdir(join(tempDir, ".nexus"));
     await writeFile(
       join(tempDir, ".nexus", "hooks.json"),
-      JSON.stringify({ hooks: [{ id: "verify", event: "before_verify", command: "node --version", enabled: true, requiredPermissions: [] }] }),
+      JSON.stringify({
+        hooks: [
+          {
+            id: "verify",
+            event: "before_verify",
+            command: "node --version",
+            enabled: true,
+            requiredPermissions: []
+          }
+        ]
+      }),
       "utf8"
     );
 
     await expect(new HookRegistry().list(tempDir)).resolves.toEqual([
-      { id: "verify", event: "before_verify", command: "node --version", enabled: true, requiredPermissions: [] }
+      {
+        id: "verify",
+        event: "before_verify",
+        command: "node --version",
+        enabled: true,
+        requiredPermissions: []
+      }
     ]);
   });
 

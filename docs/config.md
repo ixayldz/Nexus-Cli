@@ -2,12 +2,14 @@
 
 Configuration is loaded from system, user, project and explicit config files, then CLI overrides are applied.
 
-Use the built-in DeepSeek profile for live provider validation:
+DeepSeek is the default live provider. Use environment variables for live provider validation:
 
 ```bash
 set DEEPSEEK_API_KEY=<redacted>
-node apps/cli/dist/main.js exec --profile deepseek "hello"
+node apps/cli/dist/main.js exec "hello"
 ```
+
+Use `--profile fake` only for deterministic local tests that must not call a live model.
 
 Do not write API keys into config files. Prefer environment variables or ignored local auth files.
 

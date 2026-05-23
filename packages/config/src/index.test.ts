@@ -17,7 +17,8 @@ describe("config resolver", () => {
   it("returns defaults when no config files exist", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
     const config = await resolveConfig({ cwd: tempDir });
-    expect(config.modelProvider).toBe("fake");
+    expect(config.modelProvider).toBe("deepseek");
+    expect(config.model).toBe("deepseek-v4-flash");
     expect(config.sandboxMode).toBe("workspace-write");
     expect(config.security.requireHardSandbox).toBe(false);
     expect(config.providers.deepseek).toMatchObject({
@@ -66,7 +67,9 @@ describe("config resolver", () => {
     expect(config.model).toBe("deepseek-v4-flash");
     expect(config.sdlc.requirePlanForLargeChanges).toBe(false);
     expect(config.policy.allowedProviders).toEqual(["deepseek"]);
-    expect(config.sources.some((source) => source.path === join(projectRoot, ".nexus", "config.toml"))).toBe(true);
+    expect(
+      config.sources.some((source) => source.path === join(projectRoot, ".nexus", "config.toml"))
+    ).toBe(true);
   });
 
   it("parses provider-specific configuration", async () => {
@@ -159,7 +162,15 @@ describe("config resolver", () => {
     });
   });
 
-  it("supports the built-in DeepSeek profile while keeping fake as default", async () => {
+  it("supports the built-in fake profile for deterministic local tests", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
+    const config = await resolveConfig({ cwd: tempDir, overrides: { profile: "fake" } });
+
+    expect(config.modelProvider).toBe("fake");
+    expect(config.model).toBe("fake-default");
+  });
+
+  it("supports the built-in DeepSeek profile", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "nexus-config-"));
     const config = await resolveConfig({ cwd: tempDir, overrides: { profile: "deepseek" } });
 

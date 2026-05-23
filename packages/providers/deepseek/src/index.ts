@@ -174,7 +174,10 @@ export function normalizeDeepSeekToolCalls(output: unknown[]): ParsedToolCall[] 
   return toolCalls;
 }
 
-function toDeepSeekMessages(messages: ModelMessage[], observations: ModelCallInput["observations"]): unknown[] {
+function toDeepSeekMessages(
+  messages: ModelMessage[],
+  observations: ModelCallInput["observations"]
+): unknown[] {
   const result: unknown[] = messages.map((message) => ({
     role: message.role === "tool" ? "user" : message.role,
     content: message.content
@@ -229,12 +232,17 @@ function parseToolArguments(value: unknown): unknown {
   return value ?? {};
 }
 
-async function toDeepSeekError(providerId: string, response: Response): Promise<ModelProviderError> {
-  const requestId = response.headers.get("x-request-id") ?? response.headers.get("x-ds-request-id") ?? undefined;
+async function toDeepSeekError(
+  providerId: string,
+  response: Response
+): Promise<ModelProviderError> {
+  const requestId =
+    response.headers.get("x-request-id") ?? response.headers.get("x-ds-request-id") ?? undefined;
   const text = await response.text().catch(() => "");
   const payload = parseJsonObject(text);
   const error = readRecord(payload, "error") ?? payload;
-  const message = readString(error, "message") ?? `DeepSeek request failed with HTTP ${response.status}.`;
+  const message =
+    readString(error, "message") ?? `DeepSeek request failed with HTTP ${response.status}.`;
   const code = readString(error, "code") ?? readString(error, "type");
   return new ModelProviderError({
     providerId,
@@ -242,7 +250,11 @@ async function toDeepSeekError(providerId: string, response: Response): Promise<
     statusCode: response.status,
     ...(code ? { code } : {}),
     ...(requestId ? { requestId } : {}),
-    retryable: response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500
+    retryable:
+      response.status === 408 ||
+      response.status === 409 ||
+      response.status === 429 ||
+      response.status >= 500
   });
 }
 
@@ -294,7 +306,9 @@ function extractStreamDeltaText(event: Record<string, unknown>): string | undefi
   return readString(delta, "content") ?? undefined;
 }
 
-function normalizeUsage(usage: Record<string, unknown> | undefined): ModelCallResult["usage"] | undefined {
+function normalizeUsage(
+  usage: Record<string, unknown> | undefined
+): ModelCallResult["usage"] | undefined {
   if (!usage) {
     return undefined;
   }

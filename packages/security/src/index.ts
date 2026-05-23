@@ -80,7 +80,11 @@ export class SecurityRuntime {
       input.toolName === "git.log" ||
       input.toolName === "search.files"
     ) {
-      return approvalAwareAllow(input, input.risk ?? "low", `${input.toolName} is allowed by policy.`);
+      return approvalAwareAllow(
+        input,
+        input.risk ?? "low",
+        `${input.toolName} is allowed by policy.`
+      );
     }
 
     if (input.toolName === "mcp.call") {
@@ -102,7 +106,9 @@ export class SecurityRuntime {
     const absolutePath = resolve(workspaceRoot, input.path);
     const insideWorkspace =
       absolutePath === workspaceRoot ||
-      absolutePath.startsWith(workspaceRoot.endsWith(sep) ? workspaceRoot : `${workspaceRoot}${sep}`);
+      absolutePath.startsWith(
+        workspaceRoot.endsWith(sep) ? workspaceRoot : `${workspaceRoot}${sep}`
+      );
     const relativePath = relative(workspaceRoot, absolutePath).replaceAll("\\", "/");
     const protectedPath = isProtectedPath(relativePath, input.config.security.protectedPaths);
 
@@ -163,11 +169,19 @@ export class SecurityRuntime {
       operation: "read"
     });
     if (pathDecision.allowed) {
-      return approvalAwareAllow(input, input.risk ?? "low", "Normal workspace file read is allowed.");
+      return approvalAwareAllow(
+        input,
+        input.risk ?? "low",
+        "Normal workspace file read is allowed."
+      );
     }
 
     if (pathDecision.protected) {
-      return approvalOrDeny(input, pathDecision.reason ?? "Protected path requires approval.", "high");
+      return approvalOrDeny(
+        input,
+        pathDecision.reason ?? "Protected path requires approval.",
+        "high"
+      );
     }
 
     return deny(input, pathDecision.reason ?? "Path denied by policy.", "medium");
@@ -195,17 +209,29 @@ export class SecurityRuntime {
       });
       if (!pathDecision.allowed) {
         if (pathDecision.protected) {
-          return approvalOrDeny(input, pathDecision.reason ?? "Protected path requires approval.", "high");
+          return approvalOrDeny(
+            input,
+            pathDecision.reason ?? "Protected path requires approval.",
+            "high"
+          );
         }
         return deny(input, pathDecision.reason ?? "Path denied by policy.", "medium");
       }
     }
 
     if (input.config.approvalPolicy === "always") {
-      return approvalOrDeny(input, "Approval policy requires approval for mutating operations.", "medium");
+      return approvalOrDeny(
+        input,
+        "Approval policy requires approval for mutating operations.",
+        "medium"
+      );
     }
 
-    return approvalAwareAllow(input, input.risk ?? "medium", "Workspace mutation is allowed by policy.");
+    return approvalAwareAllow(
+      input,
+      input.risk ?? "medium",
+      "Workspace mutation is allowed by policy."
+    );
   }
 
   private evaluateShell(
@@ -220,7 +246,11 @@ export class SecurityRuntime {
     const commandRisk = classifyCommand(command);
     const networkRisk = commandRisk.networkRisk;
     if (networkRisk && input.config.security.networkDefault === "off") {
-      return deny(input, "Network access is disabled by security policy.", maxRisk(input.risk ?? "low", networkRisk));
+      return deny(
+        input,
+        "Network access is disabled by security policy.",
+        maxRisk(input.risk ?? "low", networkRisk)
+      );
     }
     if (networkRisk && input.config.security.networkDefault === "restricted") {
       return approvalOrDeny(
@@ -232,8 +262,13 @@ export class SecurityRuntime {
 
     const risk = maxRisk(input.risk ?? commandRisk.risk, fallbackRisk ?? "low");
     if (risk === "high" || risk === "critical") {
-      const details = commandRisk.categories.length > 0 ? ` (${commandRisk.categories.join(", ")})` : "";
-      return approvalOrDeny(input, `Command risk is ${risk}${details}; approval is required.`, risk);
+      const details =
+        commandRisk.categories.length > 0 ? ` (${commandRisk.categories.join(", ")})` : "";
+      return approvalOrDeny(
+        input,
+        `Command risk is ${risk}${details}; approval is required.`,
+        risk
+      );
     }
 
     if (input.config.approvalPolicy === "always") {
@@ -251,11 +286,17 @@ export class SecurityRuntime {
     if (!serverId) {
       return deny(input, "mcp.call requires a serverId.", "medium");
     }
-    const allowedServers = input.config.policy.allowedMcpServers.filter((item) => item.trim().length > 0);
+    const allowedServers = input.config.policy.allowedMcpServers.filter(
+      (item) => item.trim().length > 0
+    );
     if (allowedServers.length === 0 || !allowedServers.includes(serverId)) {
       return deny(input, `MCP server '${serverId}' is not allowlisted by policy.`, "high");
     }
-    return approvalOrDeny(input, `MCP server '${serverId}' requires explicit approval.`, input.risk ?? "medium");
+    return approvalOrDeny(
+      input,
+      `MCP server '${serverId}' requires explicit approval.`,
+      input.risk ?? "medium"
+    );
   }
 }
 
@@ -305,7 +346,9 @@ export class ApprovalCoordinator {
   }
 
   public list(sessionId?: SessionId): ApprovalRequestRecord[] {
-    return [...this.requests.values()].filter((record) => !sessionId || record.sessionId === sessionId);
+    return [...this.requests.values()].filter(
+      (record) => !sessionId || record.sessionId === sessionId
+    );
   }
 
   public latestPending(sessionId?: SessionId): ApprovalRequestRecord | undefined {
@@ -370,13 +413,20 @@ export function classifyCommand(command: string): CommandRiskResult {
     reasons.push(reason);
   };
 
-  if (/\brm\s+-(?:[^\s]*r[^\s]*f|[^\s]*f[^\s]*r)\b/i.test(command) || /\bRemove-Item\b.*\b-(?:Recurse|r)\b.*\b-(?:Force|f)\b/i.test(command)) {
+  if (
+    /\brm\s+-(?:[^\s]*r[^\s]*f|[^\s]*f[^\s]*r)\b/i.test(command) ||
+    /\bRemove-Item\b.*\b-(?:Recurse|r)\b.*\b-(?:Force|f)\b/i.test(command)
+  ) {
     add("critical", "destructive_filesystem", "recursive forced deletion");
   }
   if (/\b(del|erase|rd|rmdir)\b.*\b\/s\b/i.test(command)) {
     add("high", "destructive_filesystem", "recursive Windows deletion");
   }
-  if (/\b(curl|wget|irm|iwr|Invoke-WebRequest|Invoke-RestMethod)\b[\s\S]*\|\s*(bash|sh|powershell|pwsh|cmd)\b/i.test(command)) {
+  if (
+    /\b(curl|wget|irm|iwr|Invoke-WebRequest|Invoke-RestMethod)\b[\s\S]*\|\s*(bash|sh|powershell|pwsh|cmd)\b/i.test(
+      command
+    )
+  ) {
     add("critical", "download_and_execute", "downloaded content is piped to a shell");
   }
   if (/\bsudo\b|\bStart-Process\b.*\b-Verb\s+RunAs\b/i.test(command)) {
@@ -388,16 +438,26 @@ export function classifyCommand(command: string): CommandRiskResult {
   if (/\b(cat|type|Get-Content)\b\s+(\.env|.*[/\\]\.env)\b/i.test(command)) {
     add("high", "credential_access", "dotenv credential read");
   }
-  if (/\b(id_rsa|id_ed25519|\.npmrc|\.pypirc|credentials|kubeconfig|config\/gcloud)\b/i.test(command)) {
+  if (
+    /\b(id_rsa|id_ed25519|\.npmrc|\.pypirc|credentials|kubeconfig|config\/gcloud)\b/i.test(command)
+  ) {
     add("high", "credential_access", "credential file access");
   }
   if (/\b(git\s+reset|git\s+clean|git\s+push\s+--force|git\s+push\s+-f)\b/i.test(command)) {
     add("high", "destructive_git", "destructive git operation");
   }
-  if (/\b(kubectl|aws|gcloud|az|terraform\s+apply|terraform\s+destroy|helm\s+upgrade|flyctl|vercel|netlify|wrangler)\b/i.test(command)) {
+  if (
+    /\b(kubectl|aws|gcloud|az|terraform\s+apply|terraform\s+destroy|helm\s+upgrade|flyctl|vercel|netlify|wrangler)\b/i.test(
+      command
+    )
+  ) {
     add("medium", "production_deploy", "deployment or cloud control command");
   }
-  if (/\b(npm|pnpm|yarn)\s+(?:install|add|publish)|\bnpx\b|\bpip(?:3)?\s+install|\buv\s+pip\s+install|\bcargo\s+install|\bgo\s+install\b/i.test(command)) {
+  if (
+    /\b(npm|pnpm|yarn)\s+(?:install|add|publish)|\bnpx\b|\bpip(?:3)?\s+install|\buv\s+pip\s+install|\bcargo\s+install|\bgo\s+install\b/i.test(
+      command
+    )
+  ) {
     add("medium", "package_install", "package install or publish command");
   }
   if (/\b(chmod|chown)\s+-R\b|\bicacls\b|\bSet-Acl\b/i.test(command)) {
@@ -424,16 +484,29 @@ export function classifyCommand(command: string): CommandRiskResult {
 }
 
 export function classifyNetworkUse(command: string): RiskLevel | undefined {
-  if (/\b(curl|wget|ssh|scp|sftp|git\s+clone|git\s+fetch|git\s+pull|npm\s+(install|publish)|pnpm\s+(install|add|publish)|yarn\s+(add|publish))\b/i.test(command)) {
+  if (
+    /\b(curl|wget|ssh|scp|sftp|git\s+clone|git\s+fetch|git\s+pull|npm\s+(install|publish)|pnpm\s+(install|add|publish)|yarn\s+(add|publish))\b/i.test(
+      command
+    )
+  ) {
     return /\|\s*(bash|sh)\b/i.test(command) ? "critical" : "medium";
   }
-  if (/\bnode(?:\.exe)?\s+-(?:e|p)\b/i.test(command) && /\b(fetch|http|https|net|dns|WebSocket)\b/i.test(command)) {
+  if (
+    /\bnode(?:\.exe)?\s+-(?:e|p)\b/i.test(command) &&
+    /\b(fetch|http|https|net|dns|WebSocket)\b/i.test(command)
+  ) {
     return "medium";
   }
-  if (/\bpowershell(?:\.exe)?\b/i.test(command) && /\b(Invoke-WebRequest|Invoke-RestMethod|iwr|irm|WebClient|Start-BitsTransfer)\b/i.test(command)) {
+  if (
+    /\bpowershell(?:\.exe)?\b/i.test(command) &&
+    /\b(Invoke-WebRequest|Invoke-RestMethod|iwr|irm|WebClient|Start-BitsTransfer)\b/i.test(command)
+  ) {
     return "medium";
   }
-  if (/\bpython(?:3|\.exe)?\s+-c\b/i.test(command) && /\b(requests|urllib|socket|http\.client|ftplib)\b/i.test(command)) {
+  if (
+    /\bpython(?:3|\.exe)?\s+-c\b/i.test(command) &&
+    /\b(requests|urllib|socket|http\.client|ftplib)\b/i.test(command)
+  ) {
     return "medium";
   }
   return undefined;
@@ -475,7 +548,11 @@ export interface PromptInjectionFinding {
 export class PromptInjectionDetector {
   public detect(input: string): PromptInjectionFinding[] {
     const findings: PromptInjectionFinding[] = [];
-    for (const phrase of ["ignore previous instructions", "exfiltrate secrets", "run this command without asking"]) {
+    for (const phrase of [
+      "ignore previous instructions",
+      "exfiltrate secrets",
+      "run this command without asking"
+    ]) {
       if (input.toLowerCase().includes(phrase)) {
         findings.push({ phrase, severity: "high" });
       }
@@ -521,7 +598,11 @@ function requiresApproval(policy: ApprovalPolicy): boolean {
   return policy === "always" || policy === "on-request" || policy === "on-failure";
 }
 
-function approvalOrDeny(input: PolicyEvaluationInput, reason: string, risk: RiskLevel): PolicyDecision {
+function approvalOrDeny(
+  input: PolicyEvaluationInput,
+  reason: string,
+  risk: RiskLevel
+): PolicyDecision {
   if (!requiresApproval(input.config.approvalPolicy)) {
     return deny(input, reason, risk);
   }
@@ -533,7 +614,11 @@ function approvalOrDeny(input: PolicyEvaluationInput, reason: string, risk: Risk
   };
 }
 
-function approvalAwareAllow(input: PolicyEvaluationInput, risk: RiskLevel, reason: string): PolicyDecision {
+function approvalAwareAllow(
+  input: PolicyEvaluationInput,
+  risk: RiskLevel,
+  reason: string
+): PolicyDecision {
   if (input.config.approvalPolicy === "always" && risk !== "low") {
     return approvalOrDeny(input, reason, risk);
   }
@@ -583,7 +668,11 @@ async function isSymlinkSafe(input: {
 
   return (
     realTarget === input.realWorkspaceRoot ||
-    realTarget.startsWith(input.realWorkspaceRoot.endsWith(sep) ? input.realWorkspaceRoot : `${input.realWorkspaceRoot}${sep}`)
+    realTarget.startsWith(
+      input.realWorkspaceRoot.endsWith(sep)
+        ? input.realWorkspaceRoot
+        : `${input.realWorkspaceRoot}${sep}`
+    )
   );
 }
 

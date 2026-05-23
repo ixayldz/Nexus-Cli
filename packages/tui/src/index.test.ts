@@ -22,7 +22,7 @@ describe("tui reducer and slash commands", () => {
       mode: "interactive"
     });
 
-    expect(renderStatusLine(state)).toContain("model: fake/fake-default");
+    expect(renderStatusLine(state)).toContain("model: deepseek/deepseek-v4-flash");
     expect(renderStatusLine(state)).toContain("session: nx_test");
   });
 
@@ -67,7 +67,10 @@ describe("tui reducer and slash commands", () => {
       command: "/sandbox-add-read-dir",
       argument: "../shared"
     });
-    expect(parseSlashCommand("/plugins")).toMatchObject({ type: "plugins.open", command: "/plugins" });
+    expect(parseSlashCommand("/plugins")).toMatchObject({
+      type: "plugins.open",
+      command: "/plugins"
+    });
     expect(renderSlashPalette()).toContain("/status");
   });
 

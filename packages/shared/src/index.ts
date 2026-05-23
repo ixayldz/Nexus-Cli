@@ -82,7 +82,11 @@ export class NexusError extends Error {
   public readonly category: NexusErrorCategory;
   public readonly recoverable: boolean;
 
-  public constructor(input: { category: NexusErrorCategory; message: string; recoverable?: boolean }) {
+  public constructor(input: {
+    category: NexusErrorCategory;
+    message: string;
+    recoverable?: boolean;
+  }) {
     super(input.message);
     this.name = "NexusError";
     this.category = input.category;
