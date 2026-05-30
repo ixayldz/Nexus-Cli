@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - id: dependency-review
         continue-on-error: true
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
       - if: steps.dependency-review.outcome == 'failure'
         run: |
           echo "::warning::Dependency review is unavailable or failed. Enable GitHub Dependency Graph for blocking dependency-review enforcement. pnpm audit remains blocking."
