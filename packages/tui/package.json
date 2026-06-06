@@ -22,10 +22,10 @@
     "@nexus/events": "workspace:*",
     "@nexus/shared": "workspace:*",
     "ink": "^7.0.3",
-    "react": "^19.2.6"
+    "react": "^19.2.7"
   },
   "devDependencies": {
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.17",
     "ink-testing-library": "^4.0.0"
   }
 }
