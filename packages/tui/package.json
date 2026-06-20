@@ -21,7 +21,7 @@
     "@nexus/config": "workspace:*",
     "@nexus/events": "workspace:*",
     "@nexus/shared": "workspace:*",
-    "ink": "^7.0.3",
+    "ink": "^7.1.0",
     "react": "^19.2.6"
   },
   "devDependencies": {
