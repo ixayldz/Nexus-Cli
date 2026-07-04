@@ -26,7 +26,7 @@
     "ink": "^7.0.3",
     "react": "^19.2.6",
     "react-devtools-core": "^7.0.1",
-    "smol-toml": "^1.6.1",
+    "smol-toml": "^1.7.0",
     "typescript": "^5.9.3",
     "zod": "^4.1.12"
   }
